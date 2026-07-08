@@ -30,7 +30,7 @@ from technicals import compute_technicals
 from sentiment import fetch_sentiment, SentimentFetchError
 from signal_engine import evaluate
 from notifier import send_alert, send_trade_update
-from trade_tracker import register_trade, update_trades, get_active_trades
+from trade_tracker import register_trade, update_trades, get_active_trades, has_active_trade
 
 # ── Logging ──────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -59,6 +59,11 @@ def scan_symbol(symbol: str, dry_run: bool = False) -> None:
     """Run the full pipeline for a single symbol."""
     logger.info("━" * 50)
     logger.info("Scanning %s", symbol)
+
+    # Do not evaluate if there is already an active trade for this coin
+    if has_active_trade(symbol):
+        logger.info("Trade currently active for %s — waiting for it to close before generating new signals.", symbol)
+        return
 
     # 1 — Fetch candles
     try:
