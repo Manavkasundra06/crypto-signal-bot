@@ -1,0 +1,187 @@
+"""
+Signal Engine — Decision matrix that fuses technicals and sentiment.
+
+Generates a Buy/Sell signal ONLY when confidence ≥ CONFIDENCE_THRESHOLD.
+Enforces a per-asset cooldown to prevent alert spam.
+"""
+
+import time
+import logging
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+
+import config
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class Signal:
+    """Immutable record representing a generated signal."""
+
+    symbol: str
+    direction: str                    # "BUY" or "SELL"
+    confidence: float                 # 0.0 – 1.0
+    entry_price: float = 0.0         # current market price
+    stop_loss: float = 0.0           # ATR-based stop loss
+    target: float = 0.0              # risk-reward based target
+    technicals_breakdown: dict = field(default_factory=dict)
+    sentiment_breakdown: dict = field(default_factory=dict)
+    timestamp: str = ""
+
+    def __post_init__(self):
+        if not self.timestamp:
+            self.timestamp = (
+                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            )
+
+
+# ── Cooldown tracking ────────────────────────────────────────────────
+_last_signal_time: dict[str, float] = {}
+
+
+def _is_cooled_down(symbol: str) -> bool:
+    """Return True if enough time has passed since the last signal for *symbol*."""
+    last = _last_signal_time.get(symbol, 0.0)
+    elapsed = time.time() - last
+    if elapsed < config.COOLDOWN_SECONDS:
+        remaining = config.COOLDOWN_SECONDS - elapsed
+        logger.info(
+            "Cooldown active for %s — %.0fs remaining", symbol, remaining
+        )
+        return False
+    return True
+
+
+def _record_signal(symbol: str) -> None:
+    """Mark the current time as the last signal time for *symbol*."""
+    _last_signal_time[symbol] = time.time()
+
+
+def reset_cooldown(symbol: str | None = None) -> None:
+    """Reset cooldown for one or all symbols (useful in tests)."""
+    if symbol:
+        _last_signal_time.pop(symbol, None)
+    else:
+        _last_signal_time.clear()
+
+
+def _compute_price_levels(
+    direction: str, current_price: float, atr: float,
+) -> tuple[float, float, float]:
+    """
+    Compute entry, stop-loss, and target from ATR.
+
+    BUY:  SL = entry − (ATR × multiplier),  target = entry + (risk × RR ratio)
+    SELL: SL = entry + (ATR × multiplier),  target = entry − (risk × RR ratio)
+    """
+    risk = atr * config.STOP_LOSS_ATR_MULTIPLIER
+
+    if direction == "BUY":
+        stop_loss = current_price - risk
+        target = current_price + (risk * config.RISK_REWARD_RATIO)
+    else:  # SELL
+        stop_loss = current_price + risk
+        target = current_price - (risk * config.RISK_REWARD_RATIO)
+
+    return current_price, round(stop_loss, 6), round(target, 6)
+
+
+def evaluate(
+    symbol: str,
+    technical_scores: dict,
+    sentiment_scores: dict,
+) -> Signal | None:
+    """
+    Fuse technical and sentiment scores into a trading signal.
+
+    Parameters
+    ----------
+    symbol : str              e.g. "BTC/USDT"
+    technical_scores : dict   from technicals.compute_technicals()
+    sentiment_scores : dict   from sentiment.fetch_sentiment()
+
+    Returns
+    -------
+    Signal  if confidence ≥ threshold and cooldown has expired
+    None    otherwise
+    """
+    # ── Cooldown gate ────────────────────────────────────────────────
+    if not _is_cooled_down(symbol):
+        return None
+
+    # ── Weighted confidence ──────────────────────────────────────────
+    tech_score = technical_scores.get("composite_score", 50.0)  # 0-100
+    sent_score = sentiment_scores.get("score", 50.0)            # 0-100
+
+    # Normalise to 0–1 for the confidence calculation
+    tech_norm = tech_score / 100.0
+    sent_norm = sent_score / 100.0
+
+    raw_confidence = (
+        config.TECHNICAL_WEIGHT * tech_norm
+        + config.SENTIMENT_WEIGHT * sent_norm
+    )
+
+    # For bearish signals, confidence comes from low scores
+    # If combined score < 0.5, the signal is bearish; invert for confidence
+    if raw_confidence < 0.5:
+        confidence = 1.0 - raw_confidence  # e.g. 0.2 → 0.8 confidence
+        direction = "SELL"
+    else:
+        confidence = raw_confidence
+        direction = "BUY"
+
+    confidence = round(confidence, 4)
+
+    logger.info(
+        "%s — tech=%.1f, sent=%.1f, conf=%.2f%%, dir=%s",
+        symbol, tech_score, sent_score, confidence * 100, direction,
+    )
+
+    # ── Threshold gate ───────────────────────────────────────────────
+    if confidence < config.CONFIDENCE_THRESHOLD:
+        logger.info(
+            "%s confidence (%.2f%%) below threshold (%.0f%%) — no signal",
+            symbol, confidence * 100, config.CONFIDENCE_THRESHOLD * 100,
+        )
+        return None
+
+    # ── Price levels ─────────────────────────────────────────────────
+    current_price = technical_scores.get("current_price", 0.0)
+    atr = technical_scores.get("atr", 0.0)
+    entry_price, stop_loss, target = _compute_price_levels(
+        direction, current_price, atr
+    )
+
+    # ── Build signal ─────────────────────────────────────────────────
+    signal = Signal(
+        symbol=symbol,
+        direction=direction,
+        confidence=confidence,
+        entry_price=entry_price,
+        stop_loss=stop_loss,
+        target=target,
+        technicals_breakdown={
+            "rsi": technical_scores.get("rsi"),
+            "rsi_score": technical_scores.get("rsi_score"),
+            "volume_ratio": technical_scores.get("volume_ratio"),
+            "volume_score": technical_scores.get("volume_score"),
+            "composite_score": tech_score,
+            "bias": technical_scores.get("signal_bias"),
+        },
+        sentiment_breakdown={
+            "score": sent_score,
+            "label": sentiment_scores.get("label"),
+            "headline_count": sentiment_scores.get("headline_count", 0),
+            "bullish_count": sentiment_scores.get("bullish_count", 0),
+            "bearish_count": sentiment_scores.get("bearish_count", 0),
+            "neutral_count": sentiment_scores.get("neutral_count", 0),
+        },
+    )
+
+    _record_signal(symbol)
+    logger.info("🚨 Signal generated: %s %s @ %.2f%% confidence | Entry: %s | SL: %s | TP: %s",
+                signal.direction, symbol, confidence * 100,
+                entry_price, stop_loss, target)
+    return signal

@@ -1,0 +1,21 @@
+services:
+  # Background Worker — runs the bot 24/7 (no HTTP port needed)
+  - type: worker
+    name: crypto-signal-bot
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    region: singapore  # closest to India
+    plan: free
+    envVars:
+      - key: ALPHAVANTAGE_API_KEY
+        sync: false  # you'll set this in the Render dashboard
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: POLL_INTERVAL
+        value: "60"
+      - key: TRADE_UPDATE_INTERVAL
+        value: "300"
+      - key: CONFIDENCE_THRESHOLD
+        value: "0.70"
