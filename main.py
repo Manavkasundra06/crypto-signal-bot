@@ -11,9 +11,18 @@ Usage
 
 import argparse
 import logging
+import os
+import threading
+from http.server import HTTPServer, SimpleHTTPRequestHandler
 import signal as os_signal
 import sys
 import time
+
+def keep_alive():
+    """Starts a dummy web server so Render doesn't shut us down."""
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), SimpleHTTPRequestHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
 
 import config
 from data_pipeline import fetch_ohlcv, DataFetchError
@@ -113,6 +122,9 @@ def main() -> None:
         help="Print alerts to console instead of sending to Telegram",
     )
     args = parser.parse_args()
+
+    # Start dummy web server for Render's Web Service plan
+    keep_alive()
 
     symbols = args.symbols
     interval = args.interval
