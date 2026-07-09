@@ -30,7 +30,7 @@ from data_pipeline import fetch_ohlcv, DataFetchError
 from technicals import compute_technicals
 from sentiment import fetch_sentiment, SentimentFetchError
 from signal_engine import evaluate
-from notifier import send_alert, send_trade_update, send_daily_report, send_startup_notification, send_heartbeat, _send_simple
+from notifier import send_alert, send_trade_update, send_daily_report, send_startup_notification, send_heartbeat, _send_simple, _escape_md
 from trade_tracker import register_trade, update_trades, get_active_trades, has_active_trade
 import report_tracker
 import bot_listener
@@ -119,7 +119,7 @@ def scan_symbol(symbol: str, dry_run: bool = False) -> None:
         success = executor.execute_entry(sig)
         if not success:
             logger.error("Auto-trade execution failed for %s. Aborting trade registration.", symbol)
-            _send_simple(f"❌ *AUTO-TRADE FAILED*\n\nThe scheduled {sig.direction} trade for {symbol} could not be opened on Binance. Check balance and logs.", dry_run=dry_run)
+            _send_simple(f"❌ *AUTO\\-TRADE FAILED*\n\nThe scheduled {_escape_md(sig.direction)} trade for {_escape_md(symbol)} could not be opened on Binance\\. Check balance and logs\\.", dry_run=dry_run)
             return
 
     # 7 — Register trade for tracking

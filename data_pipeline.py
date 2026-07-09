@@ -39,7 +39,7 @@ def _create_exchange() -> ccxt.Exchange:
     exchange = exchange_class(options)
     
     if config.AUTO_TRADE_ENABLED and config.BINANCE_TESTNET_API_KEY:
-        exchange.set_sandbox_mode(True)
+        exchange.enable_demo_trading(True)
         try:
             exchange.load_markets()
             logger.info("✅ CCXT Connected to Binance Futures TESTNET in Read/Write mode")
