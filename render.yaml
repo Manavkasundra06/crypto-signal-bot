@@ -20,7 +20,7 @@ services:
       - key: AUTO_TRADE_ENABLED
         value: "true"
       - key: POSITION_SIZE_USD
-        value: "50.0"
+        value: "100.0"
       - key: BINANCE_TESTNET_API_KEY
         sync: false
       - key: BINANCE_TESTNET_SECRET
