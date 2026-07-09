@@ -118,9 +118,9 @@ def scan_symbol(symbol: str, dry_run: bool = False) -> None:
     if not dry_run and getattr(config, "AUTO_TRADE_ENABLED", False):
         success = executor.execute_entry(sig)
         if not success:
-            logger.error("Auto-trade execution failed for %s. Aborting trade registration.", symbol)
-            _send_simple(f"❌ *AUTO\\-TRADE FAILED*\n\nThe scheduled {_escape_md(sig.direction)} trade for {_escape_md(symbol)} could not be opened on Binance\\. Check balance and logs\\.", dry_run=dry_run)
-            return
+            logger.error("Auto-trade execution failed for %s. Bot will track as a paper trade.", symbol)
+            _send_simple(f"❌ *AUTO\\-TRADE FAILED*\n\nThe scheduled {_escape_md(sig.direction)} trade for {_escape_md(symbol)} could not be opened on Binance\\. Tracking as a paper trade\\.", dry_run=dry_run)
+            pass  # Fall through to track it anyways
 
     # 7 — Register trade for tracking
     register_trade(sig)
