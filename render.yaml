@@ -1,6 +1,6 @@
 services:
   # Background Worker — runs the bot 24/7 (no HTTP port needed)
-  - type: web
+  - type: worker
     name: crypto-signal-bot
     runtime: docker
     dockerfilePath: ./Dockerfile
