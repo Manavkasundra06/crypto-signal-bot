@@ -22,6 +22,6 @@ services:
       - key: POSITION_SIZE_USD
         value: "50.0"
       - key: BINANCE_TESTNET_API_KEY
-        value: "3JDeCqqvg7R97aUIIHULwCNK9hWqaY9OOZOUpmaGYubyhIhQCM6wLpSEuKs6EBEZ"
+        sync: false
       - key: BINANCE_TESTNET_SECRET
-        value: "5n2SaCRLKWDJy1Qw5ui5NvEPMSHQuo3DLzGEspBwOUcwwNmUKO8tVFMPkkeikRXM"
+        sync: false
