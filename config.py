@@ -32,12 +32,12 @@ VOLUME_GATE_RATIO: float = float(os.getenv("VOLUME_GATE_RATIO", "0.8"))  # min v
 # ── Sentiment (AlphaVantage) ─────────────────────────────────────────
 ALPHAVANTAGE_API_KEY: str = os.getenv("ALPHAVANTAGE_API_KEY", "")
 ALPHAVANTAGE_BASE_URL: str = "https://www.alphavantage.co/query"
-SENTIMENT_CACHE_TTL: int = 300   # seconds (5 min)
+SENTIMENT_CACHE_TTL: int = 10800   # seconds (3 hours) to protect 25/day free limit
 SENTIMENT_RATE_LIMIT: float = 2.0  # min seconds between requests
 
 # ── Decision Engine ──────────────────────────────────────────────────
-TECHNICAL_WEIGHT: float = float(os.getenv("TECHNICAL_WEIGHT", "0.6"))
-SENTIMENT_WEIGHT: float = float(os.getenv("SENTIMENT_WEIGHT", "0.4"))
+TECHNICAL_WEIGHT: float = float(os.getenv("TECHNICAL_WEIGHT", "0.8"))
+SENTIMENT_WEIGHT: float = float(os.getenv("SENTIMENT_WEIGHT", "0.2"))
 CONFIDENCE_THRESHOLD: float = float(os.getenv("CONFIDENCE_THRESHOLD", "0.70"))
 COOLDOWN_SECONDS: int = int(os.getenv("COOLDOWN_SECONDS", "900"))  # 15 min
 MAX_CONCURRENT_TRADES: int = int(os.getenv("MAX_CONCURRENT_TRADES", "3"))  # max open trades at once
