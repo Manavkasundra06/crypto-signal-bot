@@ -133,26 +133,21 @@ def fetch_ohlcv(
 
 def fetch_live_prices(symbols: list[str]) -> dict[str, float]:
     """
-    Fetch the latest close price for multiple symbols in one go.
-    Uses fetch_tickers for efficiency.
+    Fetch the latest close price for multiple symbols individually to avoid alias mismatch.
     Returns a dict mapping symbol -> price.
     """
     if not symbols:
         return {}
-
+    
     exchange = _get_exchange()
-    try:
-        if exchange.has.get("fetchTickers", False):
-            tickers = exchange.fetch_tickers(symbols)
-            return {sym: float(ticker["last"]) for sym, ticker in tickers.items() if ticker.get("last") is not None}
-        else:
-            # Fallback for exchanges without fetchTickers
-            prices = {}
-            for sym in symbols:
-                ticker = exchange.fetch_ticker(sym)
-                if ticker.get("last") is not None:
-                    prices[sym] = float(ticker["last"])
-            return prices
-    except Exception as exc:
-        logger.error("Failed to fetch live prices: %s", exc)
-        return {}
+    prices = {}
+    
+    for sym in symbols:
+        try:
+            ticker = exchange.fetch_ticker(sym)
+            if ticker.get("last") is not None:
+                prices[sym] = float(ticker["last"])
+        except Exception as exc:
+            logger.error("Failed to fetch live price for %s: %s", sym, exc)
+            
+    return prices
