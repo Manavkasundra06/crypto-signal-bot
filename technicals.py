@@ -57,26 +57,53 @@ def _bias_label(score: float) -> str:
     return "NEUTRAL"
 
 
-def compute_technicals(df: pd.DataFrame) -> dict:
-    """
-    Analyse a DataFrame of OHLCV candles and return scored technicals.
+def _macd_score(df: pd.DataFrame) -> float:
+    """Medium term momentum via MACD (12, 26, 9)"""
+    if len(df) < 30: return 50.0
+    ema12 = df["close"].ewm(span=12, adjust=False).mean()
+    ema26 = df["close"].ewm(span=26, adjust=False).mean()
+    macd = ema12 - ema26
+    signal = macd.ewm(span=9, adjust=False).mean()
+    hist = macd - signal
+    
+    h1 = float(hist.iloc[-1])
+    h2 = float(hist.iloc[-2])
+    
+    if h1 > 0 and h1 > h2:
+        return 90.0  # Bullish gaining momentum
+    elif h1 > 0:
+        return 70.0  # Bullish losing momentum
+    elif h1 < 0 and h1 < h2:
+        return 10.0  # Bearish gaining momentum
+    else:
+        return 30.0  # Bearish losing momentum
 
-    Parameters
-    ----------
-    df : pd.DataFrame  with columns [open, high, low, close, volume]
 
-    Returns
-    -------
-    dict with keys:
-        rsi             — raw RSI(14) value
-        rsi_score       — normalised 0–100
-        volume_ratio    — current vol / SMA vol
-        volume_score    — normalised 0–100
-        composite_score — weighted blend (0–100)
-        signal_bias     — "BULLISH" | "BEARISH" | "NEUTRAL"
+def _trend_score(df: pd.DataFrame) -> float:
+    """Long term trend via 50 & 200 EMA"""
+    if len(df) < 200: return 50.0
+    ema50 = df["close"].ewm(span=50, adjust=False).mean()
+    ema200 = df["close"].ewm(span=200, adjust=False).mean()
+    current = float(df["close"].iloc[-1])
+    e50 = float(ema50.iloc[-1])
+    e200 = float(ema200.iloc[-1])
+    
+    if current > e50 > e200:
+        return 100.0  # Strong uptrend
+    elif current > e200:
+        return 65.0   # Weak uptrend
+    elif current < e50 < e200:
+        return 0.0    # Strong downtrend
+    else:
+        return 35.0   # Weak downtrend
+
+
+def compute_technicals(df_5m: pd.DataFrame, df_15m: pd.DataFrame, df_1h: pd.DataFrame) -> dict:
     """
-    # ── RSI ──────────────────────────────────────────────────────────
-    delta = df["close"].diff()
+    Analyse Multi-Timeframe OHLCV candles (5m, 15m, 1h).
+    """
+    # ── Entry Timing (5m) ────────────────────────────────────────────
+    delta = df_5m["close"].diff()
     up = delta.clip(lower=0)
     down = (-1 * delta.clip(upper=0))
     ema_up = up.ewm(com=config.RSI_PERIOD - 1, adjust=False).mean()
@@ -87,29 +114,37 @@ def compute_technicals(df: pd.DataFrame) -> dict:
     rsi_value = float(rsi_series.iloc[-1]) if not pd.isna(rsi_series.iloc[-1]) else float("nan")
     rsi_score = _rsi_to_score(rsi_value)
 
-    # ── Volume ───────────────────────────────────────────────────────
-    vol_sma = df["volume"].rolling(window=config.VOLUME_SMA_PERIOD).mean()
-    current_volume = float(df["volume"].iloc[-1])
+    # Volume (5m)
+    vol_sma = df_5m["volume"].rolling(window=config.VOLUME_SMA_PERIOD).mean()
+    current_volume = float(df_5m["volume"].iloc[-1])
     sma_volume = float(vol_sma.iloc[-1]) if not pd.isna(vol_sma.iloc[-1]) else 0.0
     volume_ratio = round(current_volume / sma_volume, 2) if sma_volume else 0.0
     volume_score = _volume_to_score(current_volume, sma_volume)
-
-    # ── ATR (for stop-loss / target calculation) ─────────────────────
-    high_low = df["high"] - df["low"]
-    high_close = (df["high"] - df["close"].shift(1)).abs()
-    low_close = (df["low"] - df["close"].shift(1)).abs()
+    
+    # ATR (5m - for stop loss)
+    high_low = df_5m["high"] - df_5m["low"]
+    high_close = (df_5m["high"] - df_5m["close"].shift(1)).abs()
+    low_close = (df_5m["low"] - df_5m["close"].shift(1)).abs()
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     atr_series = tr.ewm(alpha=1/config.ATR_PERIOD, min_periods=config.ATR_PERIOD, adjust=False).mean()
-    
     atr_value = float(atr_series.iloc[-1]) if not pd.isna(atr_series.iloc[-1]) else 0.0
+    
+    current_price = float(df_5m["close"].iloc[-1])
 
-    # ── Current price ────────────────────────────────────────────────
-    current_price = float(df["close"].iloc[-1])
+    # ── Momentum (15m) ───────────────────────────────────────────────
+    momentum_score = _macd_score(df_15m)
+    
+    # ── Trend (1h) ───────────────────────────────────────────────────
+    trend_score = _trend_score(df_1h)
 
     # ── Composite ────────────────────────────────────────────────────
+    # Reproportion weights to incorporate momentum and trend
+    # volume: 15%, rsi (timing): 25%, momentum (15m): 30%, trend (1h): 30%
     composite = (
-        config.RSI_WEIGHT * rsi_score
-        + config.VOLUME_WEIGHT * volume_score
+        0.25 * rsi_score
+        + 0.15 * volume_score
+        + 0.30 * momentum_score
+        + 0.30 * trend_score
     )
     composite = round(composite, 2)
 
@@ -118,11 +153,14 @@ def compute_technicals(df: pd.DataFrame) -> dict:
         "rsi_score": round(rsi_score, 2),
         "volume_ratio": volume_ratio,
         "volume_score": round(volume_score, 2),
+        "momentum_score": round(momentum_score, 2),
+        "trend_score": round(trend_score, 2),
         "composite_score": composite,
         "signal_bias": _bias_label(composite),
         "current_price": round(current_price, 6),
         "atr": round(atr_value, 6),
     }
 
-    logger.info("Technicals for latest candle: %s", result)
+    logger.info("Multi-Timeframe Techs: RSI=%.0f Vol=%.1f Momentum=%.0f Trend=%.0f -> %s", 
+                rsi_score, volume_score, momentum_score, trend_score, result["signal_bias"])
     return result

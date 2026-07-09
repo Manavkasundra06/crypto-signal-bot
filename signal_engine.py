@@ -6,6 +6,8 @@ Enforces a per-asset cooldown to prevent alert spam.
 """
 
 import time
+import json
+import os
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -36,8 +38,30 @@ class Signal:
             )
 
 
-# ── Cooldown tracking ────────────────────────────────────────────────
+# ── Cooldown tracking (persisted to disk) ────────────────────────────
 _last_signal_time: dict[str, float] = {}
+_COOLDOWN_FILE = "cooldowns.json"
+
+
+def _load_cooldowns():
+    global _last_signal_time
+    if os.path.exists(_COOLDOWN_FILE):
+        try:
+            with open(_COOLDOWN_FILE, "r") as f:
+                _last_signal_time = json.load(f)
+        except Exception:
+            _last_signal_time = {}
+
+
+def _save_cooldowns():
+    try:
+        with open(_COOLDOWN_FILE, "w") as f:
+            json.dump(_last_signal_time, f)
+    except Exception as e:
+        logger.warning("Could not save cooldowns: %s", e)
+
+
+_load_cooldowns()
 
 
 def _is_cooled_down(symbol: str) -> bool:
@@ -56,6 +80,7 @@ def _is_cooled_down(symbol: str) -> bool:
 def _record_signal(symbol: str) -> None:
     """Mark the current time as the last signal time for *symbol*."""
     _last_signal_time[symbol] = time.time()
+    _save_cooldowns()
 
 
 def reset_cooldown(symbol: str | None = None) -> None:
@@ -124,8 +149,10 @@ def evaluate(
     )
 
     # For bearish signals, confidence comes from low scores
-    # If combined score < 0.5, the signal is bearish; invert for confidence
-    if raw_confidence < 0.5:
+    if 0.45 <= raw_confidence <= 0.55:
+        logger.info("%s — Neutral score %.2f, no clear signal.", symbol, raw_confidence)
+        return None
+    elif raw_confidence < 0.45:
         confidence = 1.0 - raw_confidence  # e.g. 0.2 → 0.8 confidence
         direction = "SELL"
     else:
@@ -145,6 +172,13 @@ def evaluate(
             "%s confidence (%.2f%%) below threshold (%.0f%%) — no signal",
             symbol, confidence * 100, config.CONFIDENCE_THRESHOLD * 100,
         )
+        return None
+
+    # ── Volume Gate (hard filter) ─────────────────────────────────────
+    volume_ratio = technical_scores.get("volume_ratio", 1.0)
+    if volume_ratio < config.VOLUME_GATE_RATIO:
+        logger.info("%s — Volume too low (%.2fx < %.2fx gate) — skipping signal",
+                    symbol, volume_ratio, config.VOLUME_GATE_RATIO)
         return None
 
     # ── Price levels ─────────────────────────────────────────────────
@@ -167,8 +201,11 @@ def evaluate(
             "rsi_score": technical_scores.get("rsi_score"),
             "volume_ratio": technical_scores.get("volume_ratio"),
             "volume_score": technical_scores.get("volume_score"),
+            "momentum_score": technical_scores.get("momentum_score"),
+            "trend_score": technical_scores.get("trend_score"),
             "composite_score": tech_score,
             "bias": technical_scores.get("signal_bias"),
+            "atr": technical_scores.get("atr", 0.0),
         },
         sentiment_breakdown={
             "score": sent_score,

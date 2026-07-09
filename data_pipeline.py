@@ -22,17 +22,35 @@ class DataFetchError(Exception):
 
 
 def _create_exchange() -> ccxt.Exchange:
-    """Instantiate the configured exchange in read-only mode."""
+    """Instantiate the configured exchange."""
     exchange_class = getattr(ccxt, config.EXCHANGE, None)
     if exchange_class is None:
         raise ValueError(f"Exchange '{config.EXCHANGE}' is not supported by ccxt")
 
-    exchange = exchange_class({
+    options = {
         "enableRateLimit": True,  # ccxt-managed throttling
-    })
-    # Safety: remove any write capabilities just in case
-    exchange.apiKey = None
-    exchange.secret = None
+        "options": {"defaultType": "future"}  # Use Futures (Perp) market as seen in screenshot
+    }
+
+    if config.AUTO_TRADE_ENABLED and config.BINANCE_TESTNET_API_KEY:
+        options["apiKey"] = config.BINANCE_TESTNET_API_KEY
+        options["secret"] = config.BINANCE_TESTNET_SECRET
+
+    exchange = exchange_class(options)
+    
+    if config.AUTO_TRADE_ENABLED and config.BINANCE_TESTNET_API_KEY:
+        exchange.set_sandbox_mode(True)
+        try:
+            exchange.load_markets()
+            logger.info("✅ CCXT Connected to Binance Futures TESTNET in Read/Write mode")
+        except Exception as e:
+            logger.error("Failed to connect to Testnet: %s", e)
+    else:
+        # Safety: remove any write capabilities just in case
+        exchange.apiKey = None
+        exchange.secret = None
+        logger.info("CCXT Exchange instantiated in Read-Only mode")
+        
     return exchange
 
 
@@ -111,3 +129,30 @@ def fetch_ohlcv(
     raise DataFetchError(
         f"Failed to fetch {symbol} after {config.MAX_RETRIES} retries: {last_error}"
     )
+
+
+def fetch_live_prices(symbols: list[str]) -> dict[str, float]:
+    """
+    Fetch the latest close price for multiple symbols in one go.
+    Uses fetch_tickers for efficiency.
+    Returns a dict mapping symbol -> price.
+    """
+    if not symbols:
+        return {}
+
+    exchange = _get_exchange()
+    try:
+        if exchange.has.get("fetchTickers", False):
+            tickers = exchange.fetch_tickers(symbols)
+            return {sym: float(ticker["last"]) for sym, ticker in tickers.items() if ticker.get("last") is not None}
+        else:
+            # Fallback for exchanges without fetchTickers
+            prices = {}
+            for sym in symbols:
+                ticker = exchange.fetch_ticker(sym)
+                if ticker.get("last") is not None:
+                    prices[sym] = float(ticker["last"])
+            return prices
+    except Exception as exc:
+        logger.error("Failed to fetch live prices: %s", exc)
+        return {}

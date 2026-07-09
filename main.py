@@ -14,6 +14,7 @@ import logging
 import os
 import threading
 from http.server import HTTPServer, SimpleHTTPRequestHandler
+from datetime import datetime, timezone
 import signal as os_signal
 import sys
 import time
@@ -29,8 +30,11 @@ from data_pipeline import fetch_ohlcv, DataFetchError
 from technicals import compute_technicals
 from sentiment import fetch_sentiment, SentimentFetchError
 from signal_engine import evaluate
-from notifier import send_alert, send_trade_update
+from notifier import send_alert, send_trade_update, send_daily_report, send_startup_notification, send_heartbeat, _send_simple
 from trade_tracker import register_trade, update_trades, get_active_trades, has_active_trade
+import report_tracker
+import bot_listener
+import executor
 
 # ── Logging ──────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -47,6 +51,7 @@ _running = True
 def _shutdown_handler(signum, frame):
     global _running
     logger.info("Received shutdown signal (%s) — stopping after current cycle", signum)
+    bot_listener.stop_polling()
     _running = False
 
 
@@ -65,16 +70,25 @@ def scan_symbol(symbol: str, dry_run: bool = False) -> None:
         logger.info("Trade currently active for %s — waiting for it to close before generating new signals.", symbol)
         return
 
-    # 1 — Fetch candles
+    # Max concurrent trades cap
+    active_count = len(get_active_trades())
+    if active_count >= config.MAX_CONCURRENT_TRADES:
+        logger.info("Max concurrent trades (%d) reached — skipping new signal for %s",
+                    config.MAX_CONCURRENT_TRADES, symbol)
+        return
+
+    # 1 — Fetch Multi-Timeframe Candles
     try:
-        df = fetch_ohlcv(symbol)
+        df_5m = fetch_ohlcv(symbol, timeframe="5m", limit=100)
+        df_15m = fetch_ohlcv(symbol, timeframe="15m", limit=100)
+        df_1h = fetch_ohlcv(symbol, timeframe="1h", limit=250) # extra to cover 200 EMA
     except DataFetchError as exc:
         logger.error("Data pipeline failed for %s: %s", symbol, exc)
         return
 
-    # 2 — Technicals
+    # 2 — Technicals (MTFA)
     try:
-        tech = compute_technicals(df)
+        tech = compute_technicals(df_5m, df_15m, df_1h)
     except Exception as exc:
         logger.error("Technical analysis failed for %s: %s", symbol, exc)
         return
@@ -100,7 +114,15 @@ def scan_symbol(symbol: str, dry_run: bool = False) -> None:
     if not sent_ok and not dry_run:
         logger.warning("Alert for %s was not delivered", symbol)
 
-    # 6 — Register trade for tracking
+    # 6 — Execute Entry
+    if not dry_run and getattr(config, "AUTO_TRADE_ENABLED", False):
+        success = executor.execute_entry(sig)
+        if not success:
+            logger.error("Auto-trade execution failed for %s. Aborting trade registration.", symbol)
+            _send_simple(f"❌ *AUTO-TRADE FAILED*\n\nThe scheduled {sig.direction} trade for {symbol} could not be opened on Binance. Check balance and logs.", dry_run=dry_run)
+            return
+
+    # 7 — Register trade for tracking
     register_trade(sig)
     logger.info("Trade registered for continuous tracking: %s", symbol)
 
@@ -130,10 +152,17 @@ def main() -> None:
 
     # Start dummy web server for Render's Web Service plan
     keep_alive()
+    
+    # Listen for new Telegram subscribers
+    if not args.dry_run:
+        bot_listener.start_polling()
 
     symbols = args.symbols
     interval = args.interval
     dry_run = args.dry_run
+
+    # Send startup notification (now that symbols/interval/dry_run are defined)
+    send_startup_notification(symbols, interval, dry_run=dry_run)
 
     logger.info("=" * 60)
     logger.info("CRYPTO SIGNAL GENERATOR")
@@ -148,6 +177,8 @@ def main() -> None:
     logger.info("=" * 60)
 
     cycle = 0
+    _last_report_day: int = -1
+    _last_heartbeat_hour: int = -1  # track which UTC-hour we last sent a heartbeat
     while _running:
         cycle += 1
         logger.info("── Cycle %d ──", cycle)
@@ -164,9 +195,29 @@ def main() -> None:
                         len(active), ", ".join(active.keys()))
             trade_updates = update_trades(dry_run=dry_run)
             for upd in trade_updates:
-                send_trade_update(
-                    upd["trade"], upd["event"], dry_run=dry_run
-                )
+                event = upd["event"]
+                trade = upd["trade"]
+                
+                send_trade_update(trade, event, dry_run=dry_run)
+                
+                if not dry_run and event in ["target_hit", "stop_loss_hit", "expired", "emergency_exit"]:
+                    executor.execute_exit(trade)
+
+        # ── Heartbeat ───────────────────────────────────────────────
+        now_utc = datetime.now(timezone.utc)
+        heartbeat_slot = now_utc.hour // config.HEARTBEAT_INTERVAL_HOURS
+        if heartbeat_slot != _last_heartbeat_hour:
+            active = get_active_trades()
+            send_heartbeat(len(active), dry_run=dry_run)
+            _last_heartbeat_hour = heartbeat_slot
+
+        # ── Daily Report Check ───────────────────────────────────────
+        if now_utc.hour == config.DAILY_REPORT_HOUR and now_utc.day != _last_report_day:
+            logger.info("📅 Sending daily report...")
+            daily = report_tracker.get_daily_report()
+            send_daily_report(daily, dry_run=dry_run)
+            report_tracker.reset_daily_report()
+            _last_report_day = now_utc.day
 
         if _running:
             logger.info("Sleeping %ds until next cycle…", interval)

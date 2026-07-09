@@ -9,12 +9,16 @@ stop-loss or take-profit is hit.
 
 import time
 import logging
-from dataclasses import dataclass, field
+import json
+import os
+from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from enum import Enum
 
 import config
-from data_pipeline import fetch_ohlcv, DataFetchError
+from data_pipeline import fetch_ohlcv, DataFetchError, fetch_live_prices
+from sentiment import fetch_sentiment
+import report_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +28,7 @@ class TradeStatus(Enum):
     TARGET_HIT = "TARGET_HIT"
     STOP_LOSS_HIT = "STOP_LOSS_HIT"
     MANUALLY_CLOSED = "MANUALLY_CLOSED"
+    EXPIRED = "EXPIRED"
 
 
 @dataclass
@@ -36,12 +41,14 @@ class ActiveTrade:
     stop_loss: float
     target: float
     confidence: float
+    atr: float = 0.0                     # ATR at signal time (for trailing stop)
     opened_at: float = 0.0              # unix timestamp
     last_update_sent: float = 0.0       # unix timestamp of last update
     current_price: float = 0.0
     peak_price: float = 0.0             # best price since entry
     worst_price: float = 0.0            # worst price since entry
     update_count: int = 0
+    trailing_sl_active: bool = False     # whether trailing stop has been activated
     status: TradeStatus = TradeStatus.ACTIVE
 
     def __post_init__(self):
@@ -111,6 +118,34 @@ class ActiveTrade:
 
 # ── Active trades storage ────────────────────────────────────────────
 _active_trades: dict[str, ActiveTrade] = {}
+_TRADES_FILE = "trades.json"
+
+def _load_trades():
+    global _active_trades
+    if os.path.exists(_TRADES_FILE):
+        try:
+            with open(_TRADES_FILE, "r") as f:
+                data = json.load(f)
+                for sym, t_data in data.items():
+                    if "status" in t_data:
+                        t_data["status"] = TradeStatus(t_data["status"])
+                    _active_trades[sym] = ActiveTrade(**t_data)
+            logger.info("Loaded %d active trades from %s", len(_active_trades), _TRADES_FILE)
+        except Exception as e:
+            logger.error("Failed to load trades: %s", e)
+
+def _save_trades():
+    try:
+        with open(_TRADES_FILE, "w") as f:
+            data = {sym: asdict(t) for sym, t in _active_trades.items()}
+            for t_data in data.values():
+                if isinstance(t_data["status"], Enum):
+                    t_data["status"] = t_data["status"].value
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        logger.error("Failed to save trades: %s", e)
+
+_load_trades()
 
 
 def get_active_trades() -> dict[str, ActiveTrade]:
@@ -141,6 +176,7 @@ def register_trade(signal) -> ActiveTrade:
         stop_loss=signal.stop_loss,
         target=signal.target,
         confidence=signal.confidence,
+        atr=signal.technicals_breakdown.get("atr", 0.0),
     )
 
     if signal.symbol in _active_trades:
@@ -150,6 +186,7 @@ def register_trade(signal) -> ActiveTrade:
         )
 
     _active_trades[signal.symbol] = trade
+    _save_trades()
     logger.info(
         "📋 Trade registered: %s %s @ %.6f | SL: %.6f | TP: %.6f",
         signal.direction, signal.symbol, signal.entry_price,
@@ -165,6 +202,7 @@ def close_trade(symbol: str, status: TradeStatus = TradeStatus.MANUALLY_CLOSED) 
     trade = _active_trades.pop(symbol, None)
     if trade:
         trade.status = status
+        _save_trades()
         logger.info(
             "🏁 Trade closed: %s %s | Status: %s | Final P&L: %+.2f%%",
             trade.direction, symbol, status.value, trade.pnl_percent,
@@ -210,30 +248,92 @@ def update_trades(dry_run: bool = False) -> list[dict]:
         return []
 
     updates = []
+    
+    symbols = list(_active_trades.keys())
+    live_prices = fetch_live_prices(symbols)
 
-    # Iterate over a copy since we may modify the dict
-    for symbol in list(_active_trades.keys()):
+    for symbol in symbols:
+        # Guard: symbol may have been removed in a previous iteration
+        if symbol not in _active_trades:
+            continue
         trade = _active_trades[symbol]
-
-        # ── Fetch current price ──────────────────────────────────────
-        try:
-            df = fetch_ohlcv(symbol, limit=1)
-            live_price = float(df["close"].iloc[-1])
-        except (DataFetchError, Exception) as exc:
-            logger.warning(
-                "Could not fetch price for tracked trade %s: %s", symbol, exc
-            )
+        
+        # ── Check Expiry ──────────────────────────────────────────────
+        elapsed = time.time() - trade.opened_at
+        if elapsed > config.MAX_TRADE_DURATION:
+            trade.status = TradeStatus.EXPIRED
+            trade.update_count += 1
+            updates.append({"trade": trade, "event": "expired"})
+            _active_trades.pop(symbol)
+            _save_trades()
+            report_tracker.record_closed_trade(trade, "expired")
+            logger.info("⏱️ TRADE EXPIRED for %s %s (Hit max duration) | P&L: %+.2f%%", 
+                        trade.direction, symbol, trade.pnl_percent)
             continue
 
-        # ── Update trade state ───────────────────────────────────────
-        trade.current_price = live_price
+        live_price = live_prices.get(symbol)
+        if live_price is None:
+            logger.warning("Could not fetch live price for tracked trade %s", symbol)
+            continue
 
+        # Set current_price FIRST so all exit alerts report accurate live price
+        trade.current_price = live_price
         if trade.direction == "BUY":
             trade.peak_price = max(trade.peak_price, live_price)
             trade.worst_price = min(trade.worst_price, live_price)
         else:
             trade.peak_price = min(trade.peak_price, live_price)
             trade.worst_price = max(trade.worst_price, live_price)
+
+        # ── Check News / Sentiment for Emergency Exit ───────────────
+        try:
+            sent = fetch_sentiment(symbol)
+            sent_label = sent.get("label", "Neutral")
+            
+            is_emergency = False
+            if trade.direction == "BUY" and sent_label == "Bearish":
+                is_emergency = True
+            elif trade.direction == "SELL" and sent_label == "Bullish":
+                is_emergency = True
+                
+            if is_emergency:
+                logger.warning("🚨 EMERGENCY EXIT for %s! News turned %s against our %s position.", 
+                               symbol, sent_label, trade.direction)
+                trade.status = TradeStatus.MANUALLY_CLOSED
+                trade.update_count += 1
+                updates.append({"trade": trade, "event": "emergency_exit"})
+                _active_trades.pop(symbol)
+                _save_trades()
+                report_tracker.record_closed_trade(trade, "emergency_exit")
+                continue
+                
+        except Exception as exc:
+            logger.debug("Could not verify news for %s: %s", symbol, exc)
+
+        # ── Trailing Stop Loss ────────────────────────────────────────
+        if config.TRAILING_STOP_ENABLED and trade.atr > 0:
+            tp_progress = trade.distance_to_target_pct
+            # Activate trailing once price crosses activation threshold (default 50%)
+            if tp_progress >= config.TRAILING_STOP_ACTIVATION_PCT * 100:
+                trail_distance = trade.atr * config.TRAILING_STOP_DISTANCE_ATR
+                if trade.direction == "BUY":
+                    new_sl = trade.peak_price - trail_distance
+                    if new_sl > trade.stop_loss:
+                        old_sl = trade.stop_loss
+                        trade.stop_loss = round(new_sl, 6)
+                        if not trade.trailing_sl_active:
+                            trade.trailing_sl_active = True
+                        logger.info("📈 Trailing SL moved UP for %s: %.6f → %.6f",
+                                    symbol, old_sl, trade.stop_loss)
+                else:  # SELL
+                    new_sl = trade.peak_price + trail_distance
+                    if new_sl < trade.stop_loss:
+                        old_sl = trade.stop_loss
+                        trade.stop_loss = round(new_sl, 6)
+                        if not trade.trailing_sl_active:
+                            trade.trailing_sl_active = True
+                        logger.info("📉 Trailing SL moved DOWN for %s: %.6f → %.6f",
+                                    symbol, old_sl, trade.stop_loss)
 
         # ── Check SL / TP ────────────────────────────────────────────
         hit_status = _check_sl_tp(trade)
@@ -243,6 +343,8 @@ def update_trades(dry_run: bool = False) -> list[dict]:
             trade.update_count += 1
             updates.append({"trade": trade, "event": "target_hit"})
             _active_trades.pop(symbol)
+            _save_trades()
+            report_tracker.record_closed_trade(trade, "target_hit")
             logger.info(
                 "🎯 TARGET HIT for %s %s @ %.6f | P&L: %+.2f%%",
                 trade.direction, symbol, live_price, trade.pnl_percent,
@@ -254,6 +356,8 @@ def update_trades(dry_run: bool = False) -> list[dict]:
             trade.update_count += 1
             updates.append({"trade": trade, "event": "stop_loss_hit"})
             _active_trades.pop(symbol)
+            _save_trades()
+            report_tracker.record_closed_trade(trade, "stop_loss_hit")
             logger.info(
                 "🛑 STOP LOSS HIT for %s %s @ %.6f | P&L: %+.2f%%",
                 trade.direction, symbol, live_price, trade.pnl_percent,
@@ -265,6 +369,7 @@ def update_trades(dry_run: bool = False) -> list[dict]:
             trade.update_count += 1
             trade.last_update_sent = time.time()
             updates.append({"trade": trade, "event": "update"})
+            _save_trades()  # Checkpoint state to save updated counters
             logger.info(
                 "📊 Update #%d for %s: price=%.6f, P&L=%+.2f%%, TP dist=%.1f%%",
                 trade.update_count, symbol, live_price,

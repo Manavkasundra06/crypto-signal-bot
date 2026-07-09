@@ -8,3 +8,9 @@ dist/
 build/
 .venv/
 venv/
+
+# Runtime state files (auto-generated, do not commit)
+trades.json
+cooldowns.json
+daily_trades.json
+subscribers.json
