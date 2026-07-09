@@ -1,9 +1,8 @@
 """
-Sentiment Analysis — Fetches and scores crypto news from AlphaVantage.
+Sentiment Analysis — Fetches and scores crypto news from RSS feeds.
 
-Uses the AlphaVantage NEWS_SENTIMENT API to fetch recent headlines for
-the requested asset, then maps AlphaVantage's NLP sentiment labels to
-our Bullish/Bearish/Neutral system.
+Uses feedparser and TextBlob to analyze sentiment locally.
+Completely free, no API limits.
 
 Rate limiting: max 1 request per SENTIMENT_RATE_LIMIT seconds.
 Caching:      responses cached for SENTIMENT_CACHE_TTL seconds.
@@ -13,7 +12,8 @@ import time
 import logging
 from typing import Any
 
-import requests
+import feedparser
+from textblob import TextBlob
 
 import config
 
@@ -24,9 +24,16 @@ _cache: dict[str, dict[str, Any]] = {}       # asset → cached response
 _cache_ts: dict[str, float] = {}              # asset → cache timestamp
 _last_request_ts: float = 0.0                 # global rate-limiter
 
+# ── RSS Feeds ────────────────────────────────────────────────────────
+RSS_FEEDS = [
+    "https://cointelegraph.com/rss",
+    "https://www.coindesk.com/arc/outboundfeeds/rss/",
+    "https://decrypt.co/feed",
+    "https://bitcoinmagazine.com/.rss/full/"
+]
 
 class SentimentFetchError(Exception):
-    """Raised when the AlphaVantage API cannot be reached."""
+    """Raised when RSS feeds cannot be fetched successfully."""
 
 
 def _rate_limit() -> None:
@@ -42,57 +49,14 @@ def _rate_limit() -> None:
 
 def _extract_asset_code(asset: str) -> str:
     """
-    Turn a trading pair like 'BTC/USDT' into an AlphaVantage ticker like 'CRYPTO:BTC'.
+    Extract base asset code, e.g., 'BTC' from 'BTC/USDT'.
     """
-    base = asset.split("/")[0].upper()
-    return f"CRYPTO:{base}"
-
-
-def _map_alpha_sentiment(label: str) -> str:
-    """
-    Map AlphaVantage sentiment labels to our internal labels.
-    AlphaVantage labels: Bullish, Somewhat-Bullish, Neutral, Somewhat-Bearish, Bearish
-    """
-    label = label.lower()
-    if "bullish" in label:
-        return "Bullish"
-    elif "bearish" in label:
-        return "Bearish"
-    return "Neutral"
-
-
-def _aggregate_score(headlines: list[dict]) -> tuple[float, str]:
-    """
-    Aggregate individual headline sentiments into a single 0–100 score.
-    """
-    if not headlines:
-        return 50.0, "Neutral"
-
-    total = 0
-    for h in headlines:
-        if h["sentiment"] == "Bullish":
-            total += 1
-        elif h["sentiment"] == "Bearish":
-            total -= 1
-
-    # Normalise [-n, +n] → [0, 100]
-    n = len(headlines)
-    score = ((total / n) + 1) / 2 * 100
-    score = round(max(0.0, min(100.0, score)), 2)
-
-    if score >= 60:
-        label = "Bullish"
-    elif score <= 40:
-        label = "Bearish"
-    else:
-        label = "Neutral"
-
-    return score, label
+    return asset.split("/")[0].upper()
 
 
 def fetch_sentiment(asset: str) -> dict:
     """
-    Fetch news headlines for *asset* and return aggregated sentiment.
+    Fetch news for *asset* via RSS and analyze sentiment locally.
 
     Parameters
     ----------
@@ -111,70 +75,70 @@ def fetch_sentiment(asset: str) -> dict:
 
     _rate_limit()
 
-    params = {
-        "function": "NEWS_SENTIMENT",
-        "tickers": code,
-        "apikey": config.ALPHAVANTAGE_API_KEY,
-        "limit": 50,  # AlphaVantage max per request
-    }
-
-    try:
-        logger.info("Fetching AlphaVantage headlines for %s", code)
-        resp = requests.get(
-            config.ALPHAVANTAGE_BASE_URL,
-            params=params,
-            timeout=10,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        
-        # Check for API-level rate limit message (AlphaVantage returns 200 OK with Information key)
-        if "Information" in data and "rate limit" in data.get("Information", "").lower():
-             logger.warning("AlphaVantage rate limit hit: %s", data.get("Information"))
-             data = {"feed": []}
-    except requests.RequestException as exc:
-        raise SentimentFetchError(
-            f"AlphaVantage API error for {code}: {exc}"
-        ) from exc
-
+    logger.info("Fetching RSS headlines for %s", code)
     results: list[dict] = []
-    
-    feed = data.get("feed", [])
-    for post in feed:
-        # Try to find ticker-specific sentiment first
-        sentiment_label = "Neutral"
-        ticker_sentiment = post.get("ticker_sentiment", [])
-        for ts in ticker_sentiment:
-            if ts.get("ticker") == code:
-                sentiment_label = ts.get("ticker_sentiment_label", "Neutral")
-                break
-        
-        # Fallback to overall label if ticker specific isn't robust
-        if sentiment_label == "Neutral":
-             sentiment_label = post.get("overall_sentiment_label", "Neutral")
-             
-        mapped_sentiment = _map_alpha_sentiment(sentiment_label)
-        
-        results.append({
-            "title": post.get("title", ""),
-            "sentiment": mapped_sentiment,
-            "published_at": post.get("time_published", ""),
-        })
+    bullish_count = 0
+    bearish_count = 0
+    neutral_count = 0
 
-    score, label = _aggregate_score(results)
+    for url in RSS_FEEDS:
+        try:
+            feed = feedparser.parse(url)
+            for entry in feed.entries:
+                title = entry.get('title', '')
+                description = entry.get('summary', '')
+                text_content = f"{title} {description}"
 
-    bullish = sum(1 for h in results if h["sentiment"] == "Bullish")
-    bearish = sum(1 for h in results if h["sentiment"] == "Bearish")
-    neutral = sum(1 for h in results if h["sentiment"] == "Neutral")
+                # Only include news that mentions the asset
+                if code.lower() in text_content.lower():
+                    # Local NLP sentiment analysis via TextBlob
+                    analysis = TextBlob(text_content)
+                    polarity = analysis.sentiment.polarity
+                    
+                    if polarity > 0.1:
+                        sentiment_label = "Bullish"
+                        bullish_count += 1
+                    elif polarity < -0.1:
+                        sentiment_label = "Bearish"
+                        bearish_count += 1
+                    else:
+                        sentiment_label = "Neutral"
+                        neutral_count += 1
+                        
+                    results.append({
+                        "title": title,
+                        "sentiment": sentiment_label,
+                        "published_at": entry.get('published', '')
+                    })
+        except Exception as exc:
+            logger.error("Failed to parse RSS feed %s: %s", url, exc)
+            continue
+            
+    if not results:
+        # No news found for this asset
+        score = 50.0
+        label = "Neutral"
+    else:
+        # Score calculation: [0, 100] scale
+        n = len(results)
+        score = (( (bullish_count - bearish_count) / n ) + 1) / 2 * 100
+        score = round(max(0.0, min(100.0, score)), 2)
+
+        if score >= 60:
+            label = "Bullish"
+        elif score <= 40:
+            label = "Bearish"
+        else:
+            label = "Neutral"
 
     output = {
         "score": score,
         "label": label,
         "headline_count": len(results),
-        "headlines": results,
-        "bullish_count": bullish,
-        "bearish_count": bearish,
-        "neutral_count": neutral,
+        "headlines": results[:50],  # Keep up to top 50 recent
+        "bullish_count": bullish_count,
+        "bearish_count": bearish_count,
+        "neutral_count": neutral_count,
     }
 
     _cache[code] = output
