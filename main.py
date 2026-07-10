@@ -89,6 +89,11 @@ def scan_symbol(symbol: str, dry_run: bool = False) -> None:
                     config.MAX_CONCURRENT_TRADES, symbol)
         return
 
+    # ── Daily Loss Circuit Breaker ───────────────────────────────────
+    if report_tracker.is_circuit_breaker_active():
+        logger.info("🚫 Circuit breaker active — skipping %s until daily reset.", symbol)
+        return
+
     # 1 — Fetch Multi-Timeframe Candles
     try:
         df_5m = fetch_ohlcv(symbol, timeframe="5m", limit=100)

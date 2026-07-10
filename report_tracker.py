@@ -124,3 +124,21 @@ def reset_daily_report() -> None:
     """Clear the daily trade log after report has been sent."""
     _save_report_file([])
     logger.info("🗑️ Daily report log reset for new day.")
+
+
+def get_daily_loss_count() -> int:
+    """Count how many losing trades happened today."""
+    trades = _load_report_file()
+    return sum(1 for t in trades if t["event"] == "stop_loss_hit")
+
+
+def is_circuit_breaker_active() -> bool:
+    """Check if the daily loss limit has been reached."""
+    import config
+    losses_today = get_daily_loss_count()
+    max_losses = getattr(config, "MAX_DAILY_LOSSES", 3)
+    if losses_today >= max_losses:
+        logger.warning("🚫 CIRCUIT BREAKER ACTIVE: %d/%d daily losses reached. No new trades allowed.", 
+                       losses_today, max_losses)
+        return True
+    return False

@@ -21,7 +21,12 @@ AUTO_TRADE_ENABLED: bool = os.getenv("AUTO_TRADE_ENABLED", "false").lower() == "
 BINANCE_TESTNET_API_KEY: str = os.getenv("BINANCE_TESTNET_API_KEY", "")
 BINANCE_TESTNET_SECRET: str = os.getenv("BINANCE_TESTNET_SECRET", "")
 LEVERAGE: int = int(os.getenv("LEVERAGE", "100"))
-POSITION_SIZE_USD: float = float(os.getenv("POSITION_SIZE_USD", "100.0"))  # Notional size: $100 = just $1 margin @ 100x!
+POSITION_SIZE_USD: float = float(os.getenv("POSITION_SIZE_USD", "100.0"))  # Fallback notional
+
+# ── Dynamic Position Sizing ──────────────────────────────────────────
+# Instead of fixed $100, risk a % of your ACTUAL Binance balance per trade.
+DYNAMIC_SIZING_ENABLED: bool = os.getenv("DYNAMIC_SIZING_ENABLED", "true").lower() == "true"
+RISK_PER_TRADE_PCT: float = float(os.getenv("RISK_PER_TRADE_PCT", "10.0"))  # Risk 10% of free balance per trade
 
 # ── Technical Analysis ───────────────────────────────────────────────
 RSI_PERIOD: int = 14
@@ -47,6 +52,16 @@ MAX_CONCURRENT_TRADES: int = int(os.getenv("MAX_CONCURRENT_TRADES", "3"))  # 3 t
 ATR_PERIOD: int = 14
 STOP_LOSS_ATR_MULTIPLIER: float = float(os.getenv("STOP_LOSS_ATR_MULTIPLIER", "1.2"))
 RISK_REWARD_RATIO: float = float(os.getenv("RISK_REWARD_RATIO", "2.0")) # Target is 2x the stop loss
+
+# ── Daily Loss Circuit Breaker ───────────────────────────────────────
+# Auto-lock the bot after X losses in a single UTC day. Prevents tilt/revenge trading.
+MAX_DAILY_LOSSES: int = int(os.getenv("MAX_DAILY_LOSSES", "3"))
+
+# ── Partial Take Profit ──────────────────────────────────────────────
+# Close a portion of the position at the first target to lock in guaranteed profit.
+PARTIAL_TP_ENABLED: bool = os.getenv("PARTIAL_TP_ENABLED", "true").lower() == "true"
+PARTIAL_TP_CLOSE_PCT: float = float(os.getenv("PARTIAL_TP_CLOSE_PCT", "50.0"))  # Close 50% at first target
+PARTIAL_TP_TRIGGER_PCT: float = float(os.getenv("PARTIAL_TP_TRIGGER_PCT", "70.0"))  # Trigger when 70% of way to target
 
 # ── Trailing Stop Loss ────────────────────────────────────────────────
 TRAILING_STOP_ENABLED: bool = os.getenv("TRAILING_STOP_ENABLED", "true").lower() == "true"

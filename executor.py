@@ -33,8 +33,24 @@ def execute_entry(signal) -> dict:
 
         price = signal.entry_price
         
+        # ── DYNAMIC POSITION SIZING ──────────────────────────────────
+        target_notional_usd = config.POSITION_SIZE_USD
+        if getattr(config, "DYNAMIC_SIZING_ENABLED", False):
+            try:
+                balance = exchange.fetch_balance()
+                free_usdt = balance.get('USDT', {}).get('free', 0.0)
+                if free_usdt > 0:
+                    # e.g., 10% risk of $10 free balance = $1 margin per trade
+                    margin_per_trade = free_usdt * (config.RISK_PER_TRADE_PCT / 100.0)
+                    target_notional_usd = margin_per_trade * config.LEVERAGE
+                    logger.info("💰 Dynamic Sizing: Using $%.2f margin (%.1f%% of $%.2f free USDT) -> $%.2f notional",
+                                margin_per_trade, config.RISK_PER_TRADE_PCT, free_usdt, target_notional_usd)
+            except Exception as e:
+                logger.warning("Could not fetch balance for dynamic sizing — falling back to $%.2f notional: %s", 
+                               target_notional_usd, e)
+                               
         # Calculate the raw amount
-        raw_amount = config.POSITION_SIZE_USD / price
+        raw_amount = target_notional_usd / price
         
         try:
             exchange.load_markets()
@@ -81,12 +97,39 @@ def execute_entry(signal) -> dict:
             sl_id = sl_order.get('id', '')
             logger.info("🛡️ Hard Stop-Loss Placed on Exchange: %s", signal.stop_loss)
             
-            tp_order = exchange.create_order(
-                signal.symbol, 'TAKE_PROFIT_MARKET', inverse_side, amount, 
-                params={'stopPrice': signal.target, 'reduceOnly': True}
-            )
-            tp_id = tp_order.get('id', '')
-            logger.info("🎯 Hard Take-Profit Placed on Exchange: %s", signal.target)
+            if getattr(config, "PARTIAL_TP_ENABLED", False):
+                # Calculate Partial TP thresholds
+                # Distance from real fill to final target
+                tp_dist = signal.target - avg_price_flt if signal.direction == 'BUY' else avg_price_flt - signal.target
+                partial_tp_dist = tp_dist * (config.PARTIAL_TP_TRIGGER_PCT / 100.0)
+                
+                partial_tp_price = avg_price_flt + partial_tp_dist if signal.direction == 'BUY' else avg_price_flt - partial_tp_dist
+                partial_amount = float(exchange.amount_to_precision(signal.symbol, amount * (config.PARTIAL_TP_CLOSE_PCT / 100.0)))
+                final_amount = float(exchange.amount_to_precision(signal.symbol, amount - partial_amount))
+                
+                # 1) Partial TP
+                if partial_amount > 0:
+                    exchange.create_order(
+                        signal.symbol, 'TAKE_PROFIT_MARKET', inverse_side, partial_amount, 
+                        params={'stopPrice': round(partial_tp_price, 6), 'reduceOnly': True}
+                    )
+                    logger.info("🎯 Partial TP Placed: %.6f for %s contracts", partial_tp_price, partial_amount)
+                
+                # 2) Final TP
+                if final_amount > 0:
+                    tp_order = exchange.create_order(
+                        signal.symbol, 'TAKE_PROFIT_MARKET', inverse_side, final_amount, 
+                        params={'stopPrice': round(signal.target, 6), 'reduceOnly': True}
+                    )
+                    tp_id = tp_order.get('id', '')
+                    logger.info("🎯 Final TP Placed on Exchange: %s for %s contracts", signal.target, final_amount)
+            else:
+                tp_order = exchange.create_order(
+                    signal.symbol, 'TAKE_PROFIT_MARKET', inverse_side, amount, 
+                    params={'stopPrice': signal.target, 'reduceOnly': True}
+                )
+                tp_id = tp_order.get('id', '')
+                logger.info("🎯 Hard Take-Profit Placed on Exchange: %s", signal.target)
         except Exception as e:
             logger.error("⚠️ Failed to place hard SL/TP orders: %s. You may be naked on this trade!", e)
             
@@ -133,14 +176,12 @@ def execute_exit(trade) -> bool:
         
     exchange = _get_exchange()
     
-    # Clean up hard stops to avoid leaving ghost orders
-    for oid in [trade.sl_order_id, trade.tp_order_id]:
-        if oid:
-            try:
-                exchange.cancel_order(oid, trade.symbol)
-                logger.info("Cleaned up hard stop/target order: %s", oid)
-            except Exception:
-                pass
+    # Clean up ALL open target/stop limit orders linked to this pair
+    try:
+        exchange.cancel_all_orders(trade.symbol)
+        logger.info("🧹 Cleaned up all resting ghost orders for %s", trade.symbol)
+    except Exception as exc:
+        logger.warning("Could not cleanly bulk-cancel orders for %s: %s", trade.symbol, exc)
                 
     # If the exchange already closed it (Hard TP/SL hit), we don't need a market exit
     if not is_position_open(trade.symbol):
@@ -151,13 +192,8 @@ def execute_exit(trade) -> bool:
         try:
             price = trade.entry_price
             
-            raw_amount = config.POSITION_SIZE_USD / price
-            
-            try:
-                exchange.load_markets()
-                amount = float(exchange.amount_to_precision(trade.symbol, raw_amount))
-            except Exception:
-                amount = raw_amount
+            # Safely close exactly the amount we opened
+            amount = trade.amount
             
             # Inverse the direction to close the trade
             side = 'sell' if trade.direction == 'BUY' else 'buy'
