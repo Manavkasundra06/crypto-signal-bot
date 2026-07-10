@@ -293,7 +293,9 @@ def update_trades(dry_run: bool = False) -> list[dict]:
             continue
             
         # ── Verify Position Exists on Exchange (Liquidated / Hit Check) ────
-        if not executor.is_position_open(symbol):
+        # GRACE PERIOD: Don't check brand-new trades — give Binance time to propagate
+        trade_age = time.time() - trade.opened_at
+        if trade_age > 60 and not executor.is_position_open(symbol):
             # The exchange closed this position! Let's see if it was a Win or Loss.
             event = "stop_loss_hit"
             if trade.direction == "BUY" and live_price >= trade.target:
@@ -303,6 +305,7 @@ def update_trades(dry_run: bool = False) -> list[dict]:
                 
             logger.info("🚨 Hard Stop triggered on exchange for %s! Result: %s", symbol, event.upper())
             trade.status = TradeStatus.TARGET_HIT if event == "target_hit" else TradeStatus.STOP_LOSS_HIT
+            trade.current_price = live_price
             trade.update_count += 1
             updates.append({"trade": trade, "event": event})
             
@@ -376,34 +379,37 @@ def update_trades(dry_run: bool = False) -> list[dict]:
                             trade.trailing_sl_active = True
                             logger.info("📉 Trailing SL physically moved DOWN on exchange for %s: %.6f → %.6f", symbol, old_sl, trade.stop_loss)
 
-        # ── Check SL / TP ────────────────────────────────────────────
-        hit_status = _check_sl_tp(trade)
+        # ── Check SL / TP (ONLY in paper-trading mode) ────────────────
+        # When AUTO_TRADE is ON, Binance's Hard Stops handle exits.
+        # Running soft checks alongside would cause false double-closures.
+        if not getattr(config, "AUTO_TRADE_ENABLED", False):
+            hit_status = _check_sl_tp(trade)
 
-        if hit_status == TradeStatus.TARGET_HIT:
-            trade.status = TradeStatus.TARGET_HIT
-            trade.update_count += 1
-            updates.append({"trade": trade, "event": "target_hit"})
-            _active_trades.pop(symbol)
-            _save_trades()
-            report_tracker.record_closed_trade(trade, "target_hit")
-            logger.info(
-                "🎯 TARGET HIT for %s %s @ %.6f | P&L: %+.2f%%",
-                trade.direction, symbol, live_price, trade.pnl_percent,
-            )
-            continue
+            if hit_status == TradeStatus.TARGET_HIT:
+                trade.status = TradeStatus.TARGET_HIT
+                trade.update_count += 1
+                updates.append({"trade": trade, "event": "target_hit"})
+                _active_trades.pop(symbol)
+                _save_trades()
+                report_tracker.record_closed_trade(trade, "target_hit")
+                logger.info(
+                    "🎯 TARGET HIT for %s %s @ %.6f | P&L: %+.2f%%",
+                    trade.direction, symbol, live_price, trade.pnl_percent,
+                )
+                continue
 
-        if hit_status == TradeStatus.STOP_LOSS_HIT:
-            trade.status = TradeStatus.STOP_LOSS_HIT
-            trade.update_count += 1
-            updates.append({"trade": trade, "event": "stop_loss_hit"})
-            _active_trades.pop(symbol)
-            _save_trades()
-            report_tracker.record_closed_trade(trade, "stop_loss_hit")
-            logger.info(
-                "🛑 STOP LOSS HIT for %s %s @ %.6f | P&L: %+.2f%%",
-                trade.direction, symbol, live_price, trade.pnl_percent,
-            )
-            continue
+            if hit_status == TradeStatus.STOP_LOSS_HIT:
+                trade.status = TradeStatus.STOP_LOSS_HIT
+                trade.update_count += 1
+                updates.append({"trade": trade, "event": "stop_loss_hit"})
+                _active_trades.pop(symbol)
+                _save_trades()
+                report_tracker.record_closed_trade(trade, "stop_loss_hit")
+                logger.info(
+                    "🛑 STOP LOSS HIT for %s %s @ %.6f | P&L: %+.2f%%",
+                    trade.direction, symbol, live_price, trade.pnl_percent,
+                )
+                continue
 
         # ── Periodic update ──────────────────────────────────────────
         if _should_send_update(trade):
