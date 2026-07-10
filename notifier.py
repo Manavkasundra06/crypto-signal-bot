@@ -15,6 +15,11 @@ import subscriber_manager
 
 logger = logging.getLogger(__name__)
 
+def _get_footer() -> str:
+    if getattr(config, "AUTO_TRADE_ENABLED", False):
+        return "🤖 _TESTNET AUTO-TRADE EXECUTED_"
+    return "⚠️ _SIGNAL ONLY — No trades executed_"
+
 # ── Secondary cooldown (safety layer) ────────────────────────────────
 _last_notify_time: dict[str, float] = {}
 
@@ -67,7 +72,7 @@ def _format_alert(signal) -> str:
         f"  Sentiment Score: {_escape_md(str(sent.get('score', 'N/A')))}",
         "",
         f"⏰ {_escape_md(signal.timestamp)}",
-        f"⚠️ _SIGNAL ONLY — No trades executed_",
+        _get_footer(),
     ]
     return "\n".join(lines)
 
@@ -170,14 +175,21 @@ def _format_trade_update(trade) -> str:
         f"  Current: {_escape_md(f'{trade.current_price:.6f}')}",
         f"  Best: {_escape_md(f'{trade.peak_price:.6f}')}",
         "",
-        f"{pnl_emoji} *P&L:* {_escape_md(f'{pnl:+.2f}')}% \\({_escape_md(f'{trade.pnl_absolute:+.6f}')}\\)",
+        f"{pnl_emoji} *P&L:* {_escape_md(f'{pnl:+.2f}')}% \\(Net: *\\${_escape_md(f'{trade.pnl_usd:+.2f}')}*\\)",
         "",
         f"🎯 *To Target:* {_escape_md(f'{tp_progress:.1f}')}%",
         f"  {_escape_md(tp_bar)}",
-        f"  🛑 SL: {_escape_md(str(trade.stop_loss))}",
+    ]
+    
+    if getattr(trade, "trailing_sl_active", False):
+        lines.append(f"  � *Trailed SL:* {_escape_md(str(trade.stop_loss))}")
+    else:
+        lines.append(f"  �🛑 SL: {_escape_md(str(trade.stop_loss))}")
+        
+    lines += [
         f"  🎯 TP: {_escape_md(str(trade.target))}",
         "",
-        f"⚠️ _SIGNAL ONLY — No trades executed_",
+        _get_footer(),
     ]
     return "\n".join(lines)
 
@@ -191,9 +203,14 @@ def _format_trade_close(trade, event: str) -> str:
         result_emoji = "🏆"
         result_text = "PROFIT"
     elif event == "stop_loss_hit":
-        header = "🛑❌ *STOP LOSS HIT*"
-        result_emoji = "💔"
-        result_text = "LOSS"
+        if pnl > 0:
+            header = "🛑📈 *TRAILING STOP HIT*"
+            result_emoji = "🛡️"
+            result_text = "SECURED PROFIT"
+        else:
+            header = "🛑❌ *STOP LOSS HIT*"
+            result_emoji = "💔"
+            result_text = "LOSS"
     elif event == "emergency_exit":
         header = "🚨📰 *NEWS EMERGENCY EXIT*"
         result_emoji = "⚠️"
@@ -221,7 +238,7 @@ def _format_trade_close(trade, event: str) -> str:
         "",
         f"{'🟢' if pnl >= 0 else '🔴'} *Final P&L:* {_escape_md(f'{pnl:+.2f}')}%",
         "",
-        f"⚠️ _SIGNAL ONLY — No trades executed_",
+        _get_footer(),
     ]
     return "\n".join(lines)
 
@@ -409,7 +426,7 @@ def _format_daily_report(report: dict) -> str:
         dire  = _escape_md(t["direction"])
         lines.append(f"  {i}\\. {em} {sym} {dire} \\| P&L: {p_str}% \\| {dur}")
 
-    lines += ["", "⚠️ _SIGNAL ONLY — No trades executed_"]
+    lines += ["", _get_footer()]
     return "\n".join(lines)
 
 

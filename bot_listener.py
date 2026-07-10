@@ -2,9 +2,12 @@ import time
 import requests
 import logging
 import threading
+from datetime import datetime, timezone
 
 import config
 import subscriber_manager
+import report_tracker
+import trade_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +31,12 @@ def _send_welcome(chat_id: int):
         "🟢 *Welcome to Crypto Signal Bot!*\n\n"
         "You have been subscribed successfully.\n"
         "You will now receive live alerts and daily performance reports.\n\n"
-        "Type /stop at any time to unsubscribe."
+        "Commands:\n"
+        "/report — Get today's P&L and open trades\n"
+        "/balance — Check your Binance Futures wallet\n"
+        "/panic — 🛑 KILL SWITCH (Dump & Stop)\n"
+        "/resume — ▶️ RESTART AUTO-TRADING\n"
+        "/stop — Unsubscribe"
     )
     _send_message(chat_id, msg)
 
@@ -39,6 +47,70 @@ def _send_goodbye(chat_id: int):
         "Type /start to resubscribe."
     )
     _send_message(chat_id, msg)
+
+def _send_pnl_report(chat_id: int):
+    """Build and send today's P&L report to a single user."""
+    now_utc = datetime.now(timezone.utc)
+    date_str = now_utc.strftime("%Y-%m-%d")
+
+    # ── Section 1: Closed trades today ───────────────────────────────
+    report = report_tracker.get_daily_report()
+    closed_count = report.get("total_trades", 0)
+
+    lines = [
+        f"📊 *P&L Report — {date_str}*",
+        "",
+    ]
+
+    if closed_count > 0:
+        pnl_emoji = "🟢" if report["total_pnl"] >= 0 else "🔴"
+        lines += [
+            "*── Closed Trades ──*",
+            f"  Total: {closed_count}",
+            f"  ✅ Wins: {report['wins']}  |  🛑 Losses: {report['losses']}",
+            f"  Win Rate: {report['win_rate']:.1f}%",
+            f"  {pnl_emoji} Total P&L: {report['total_pnl']:+.2f}%",
+            f"  Avg P&L/trade: {report['avg_pnl']:+.2f}%",
+        ]
+        best = report.get("best_trade")
+        worst = report.get("worst_trade")
+        if best:
+            lines.append(f"  🏆 Best: {best['symbol']} {best['direction']} → {best['pnl_percent']:+.2f}%")
+        if worst:
+            lines.append(f"  💔 Worst: {worst['symbol']} {worst['direction']} → {worst['pnl_percent']:+.2f}%")
+
+        lines.append("")
+        lines.append("*Trade Log:*")
+        for i, t in enumerate(report["trades"], 1):
+            em = {"target_hit": "🎯", "stop_loss_hit": "🛑", "expired": "⏱️", "emergency_exit": "🚨"}.get(t["event"], "•")
+            lines.append(f"  {i}. {em} {t['symbol']} {t['direction']} | {t['pnl_percent']:+.2f}% | {t['duration']}")
+    else:
+        lines.append("_No closed trades today._")
+
+    # ── Section 2: Currently active trades ───────────────────────────
+    portfolio = trade_tracker.get_portfolio_summary()
+    active_count = portfolio.get("count", 0)
+
+    lines.append("")
+    if active_count > 0:
+        lines += [
+            f"*── Active Trades ({active_count}) ──*",
+        ]
+        for t in portfolio["trades"]:
+            pnl_em = "🟢" if t["pnl_percent"] >= 0 else "🔴"
+            lines.append(
+                f"  {pnl_em} {t['symbol']} {t['direction']} | "
+                f"P&L: {t['pnl_percent']:+.2f}% | {t['duration']} | "
+                f"Target: {t['distance_to_target']:.0f}% away"
+            )
+        lines.append(f"  Avg unrealised P&L: {portfolio['avg_pnl']:+.2f}%")
+    else:
+        lines.append("_No active trades right now._")
+
+    footer = "🤖 _TESTNET AUTO-TRADE EXECUTED_" if getattr(config, "AUTO_TRADE_ENABLED", False) else "⚠️ _SIGNAL ONLY — No real trades executed_"
+    lines += ["", footer]
+
+    _send_message(chat_id, "\n".join(lines))
 
 def _poll_updates():
     offset = None
@@ -83,6 +155,51 @@ def _poll_updates():
                                 _send_goodbye(chat_id)
                             else:
                                 _send_message(chat_id, "You were not subscribed.")
+                        elif text.startswith("/report"):
+                            _send_pnl_report(chat_id)
+                        elif text.startswith("/panic"):
+                            _send_message(chat_id, "🚨 *PANIC SWITCH ACTIVATED*\nDisabling auto-trade and exiting all positions immediately!")
+                            config.AUTO_TRADE_ENABLED = False
+                            
+                            active_trades = trade_tracker.get_active_trades()
+                            closed = 0
+                            for symbol, trade in active_trades.items():
+                                import executor
+                                # Temporarily re-enable auto-trade just to run the emergency exit function
+                                config.AUTO_TRADE_ENABLED = True
+                                success = executor.execute_exit(trade)
+                                config.AUTO_TRADE_ENABLED = False
+                                
+                                if success:
+                                    trade_tracker._active_trades.pop(symbol, None)
+                                    trade_tracker._save_trades()
+                                    closed += 1
+                                    
+                            _send_message(chat_id, f"✅ Successfully market-dumped {closed}/{len(active_trades)} positions. Auto-trading is now locked OFF.")
+                            
+                        elif text.startswith("/resume"):
+                            config.AUTO_TRADE_ENABLED = True
+                            _send_message(chat_id, "▶️ *AUTO-TRADE RESUMED*\n\nThe bot will now resume placing trades on Binance.")
+                            
+                        elif text.startswith("/balance"):
+                            try:
+                                import executor
+                                exchange = executor._get_exchange()
+                                bal = exchange.fetch_balance()
+                                usdt = bal.get('USDT', {})
+                                free = usdt.get('free', 0.0)
+                                total = usdt.get('total', 0.0)
+                                used = usdt.get('used', 0.0)
+                                msg = (
+                                    "💼 *BINANCE WALLET BALANCE*\n\n"
+                                    f"💵 Total: `${total:.2f}`\n"
+                                    f"🔓 Free Margin: `${free:.2f}`\n"
+                                    f"🔒 In Trades: `${used:.2f}`"
+                                )
+                                _send_message(chat_id, msg)
+                            except Exception as e:
+                                _send_message(chat_id, "❌ Could not fetch balance. Check your API keys.")
+                                logger.error("Balance fetch error: %s", e)
             
             time.sleep(1)
         except requests.exceptions.Timeout:

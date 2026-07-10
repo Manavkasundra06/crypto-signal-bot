@@ -19,6 +19,7 @@ import config
 from data_pipeline import fetch_ohlcv, DataFetchError, fetch_live_prices
 from sentiment import fetch_sentiment
 import report_tracker
+import executor
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,9 @@ class ActiveTrade:
     stop_loss: float
     target: float
     confidence: float
+    amount: float = 0.0
+    sl_order_id: str = ""
+    tp_order_id: str = ""
     atr: float = 0.0                     # ATR at signal time (for trailing stop)
     opened_at: float = 0.0              # unix timestamp
     last_update_sent: float = 0.0       # unix timestamp of last update
@@ -78,6 +82,15 @@ class ActiveTrade:
             return self.current_price - self.entry_price
         else:
             return self.entry_price - self.current_price
+
+    @property
+    def pnl_usd(self) -> float:
+        """Unrealised P&L in actual US Dollars, accounting for a 0.1% round-trip Binance fee."""
+        import config
+        gross_profit = (self.pnl_percent / 100) * config.POSITION_SIZE_USD
+        # Binance taker fee is typically 0.05% per side, so 0.1% total on the notional size
+        estimated_fees = config.POSITION_SIZE_USD * 0.001 
+        return gross_profit - estimated_fees
 
     @property
     def distance_to_target_pct(self) -> float:
@@ -176,6 +189,9 @@ def register_trade(signal) -> ActiveTrade:
         stop_loss=signal.stop_loss,
         target=signal.target,
         confidence=signal.confidence,
+        amount=signal.amount,
+        sl_order_id=signal.sl_order_id,
+        tp_order_id=signal.tp_order_id,
         atr=signal.technicals_breakdown.get("atr", 0.0),
     )
 
@@ -275,6 +291,25 @@ def update_trades(dry_run: bool = False) -> list[dict]:
         if live_price is None:
             logger.warning("Could not fetch live price for tracked trade %s", symbol)
             continue
+            
+        # ── Verify Position Exists on Exchange (Liquidated / Hit Check) ────
+        if not executor.is_position_open(symbol):
+            # The exchange closed this position! Let's see if it was a Win or Loss.
+            event = "stop_loss_hit"
+            if trade.direction == "BUY" and live_price >= trade.target:
+                event = "target_hit"
+            elif trade.direction == "SELL" and live_price <= trade.target:
+                event = "target_hit"
+                
+            logger.info("🚨 Hard Stop triggered on exchange for %s! Result: %s", symbol, event.upper())
+            trade.status = TradeStatus.TARGET_HIT if event == "target_hit" else TradeStatus.STOP_LOSS_HIT
+            trade.update_count += 1
+            updates.append({"trade": trade, "event": event})
+            
+            _active_trades.pop(symbol)
+            _save_trades()
+            report_tracker.record_closed_trade(trade, event)
+            continue
 
         # Set current_price FIRST so all exit alerts report accurate live price
         trade.current_price = live_price
@@ -316,24 +351,30 @@ def update_trades(dry_run: bool = False) -> list[dict]:
             # Activate trailing once price crosses activation threshold (default 50%)
             if tp_progress >= config.TRAILING_STOP_ACTIVATION_PCT * 100:
                 trail_distance = trade.atr * config.TRAILING_STOP_DISTANCE_ATR
+                inverse_side = "sell" if trade.direction == "BUY" else "buy"
+                
                 if trade.direction == "BUY":
                     new_sl = trade.peak_price - trail_distance
                     if new_sl > trade.stop_loss:
                         old_sl = trade.stop_loss
-                        trade.stop_loss = round(new_sl, 6)
-                        if not trade.trailing_sl_active:
+                        new_sl = round(new_sl, 6)
+                        new_id = executor.move_hard_stop(symbol, trade.sl_order_id, new_sl, inverse_side, trade.amount)
+                        if new_id:
+                            trade.sl_order_id = new_id
+                            trade.stop_loss = new_sl
                             trade.trailing_sl_active = True
-                        logger.info("📈 Trailing SL moved UP for %s: %.6f → %.6f",
-                                    symbol, old_sl, trade.stop_loss)
+                            logger.info("📈 Trailing SL physically moved UP on exchange for %s: %.6f → %.6f", symbol, old_sl, trade.stop_loss)
                 else:  # SELL
                     new_sl = trade.peak_price + trail_distance
                     if new_sl < trade.stop_loss:
                         old_sl = trade.stop_loss
-                        trade.stop_loss = round(new_sl, 6)
-                        if not trade.trailing_sl_active:
+                        new_sl = round(new_sl, 6)
+                        new_id = executor.move_hard_stop(symbol, trade.sl_order_id, new_sl, inverse_side, trade.amount)
+                        if new_id:
+                            trade.sl_order_id = new_id
+                            trade.stop_loss = new_sl
                             trade.trailing_sl_active = True
-                        logger.info("📉 Trailing SL moved DOWN for %s: %.6f → %.6f",
-                                    symbol, old_sl, trade.stop_loss)
+                            logger.info("📉 Trailing SL physically moved DOWN on exchange for %s: %.6f → %.6f", symbol, old_sl, trade.stop_loss)
 
         # ── Check SL / TP ────────────────────────────────────────────
         hit_status = _check_sl_tp(trade)

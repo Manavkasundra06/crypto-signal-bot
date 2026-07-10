@@ -62,8 +62,20 @@ os_signal.signal(os_signal.SIGTERM, _shutdown_handler)
 # ── Core scan ────────────────────────────────────────────────────────
 def scan_symbol(symbol: str, dry_run: bool = False) -> None:
     """Run the full pipeline for a single symbol."""
+    import datetime
     logger.info("━" * 50)
     logger.info("Scanning %s", symbol)
+    
+    # ── Session & Weekend Guards ─────────────────────────────────────
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    if getattr(config, "AVOID_WEEKENDS", False) and now_utc.weekday() >= 5:
+        logger.debug("Skipping %s — Weekend trading is disabled.", symbol)
+        return
+        
+    allowed_hours = getattr(config, "ALLOWED_TRADING_HOURS_UTC", [])
+    if allowed_hours and now_utc.hour not in allowed_hours:
+        logger.debug("Skipping %s — Outside allowed UTC trading session.", symbol)
+        return
 
     # Do not evaluate if there is already an active trade for this coin
     if has_active_trade(symbol):
@@ -116,11 +128,20 @@ def scan_symbol(symbol: str, dry_run: bool = False) -> None:
 
     # 6 — Execute Entry
     if not dry_run and getattr(config, "AUTO_TRADE_ENABLED", False):
-        success = executor.execute_entry(sig)
-        if not success:
-            logger.error("Auto-trade execution failed for %s. Bot will track as a paper trade.", symbol)
-            _send_simple(f"❌ *AUTO\\-TRADE FAILED*\n\nThe scheduled {_escape_md(sig.direction)} trade for {_escape_md(symbol)} could not be opened on Binance\\. Tracking as a paper trade\\.", dry_run=dry_run)
-            pass  # Fall through to track it anyways
+        exec_result = executor.execute_entry(sig)
+        if not exec_result["success"]:
+            logger.error("Auto-trade execution failed for %s. Discarding signal.", symbol)
+            _send_simple(f"❌ *AUTO\\-TRADE FAILED*\n\nThe scheduled {_escape_md(sig.direction)} trade for {_escape_md(symbol)} could not be opened on Binance\\. Discarding signal\\.", dry_run=dry_run)
+            return  # ABORT: Do not track it internally to save our limited slots!
+            
+        # Update the tracked entry price to precisely match Binance's fill price
+        fill_price = exec_result["avg_price"]
+        if fill_price > 0:
+            sig.entry_price = fill_price
+            
+        sig.amount = exec_result["amount"]
+        sig.sl_order_id = exec_result["sl_id"]
+        sig.tp_order_id = exec_result["tp_id"]
 
     # 7 — Register trade for tracking
     register_trade(sig)

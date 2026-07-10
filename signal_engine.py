@@ -27,6 +27,9 @@ class Signal:
     entry_price: float = 0.0         # current market price
     stop_loss: float = 0.0           # ATR-based stop loss
     target: float = 0.0              # risk-reward based target
+    amount: float = 0.0              # executed units
+    sl_order_id: str = ""            # hard stop loss exchange id
+    tp_order_id: str = ""            # hard take profit exchange id
     technicals_breakdown: dict = field(default_factory=dict)
     sentiment_breakdown: dict = field(default_factory=dict)
     timestamp: str = ""

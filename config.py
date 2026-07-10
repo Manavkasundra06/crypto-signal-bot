@@ -20,7 +20,8 @@ CANDLE_LIMIT: int = int(os.getenv("CANDLE_LIMIT", "100"))
 AUTO_TRADE_ENABLED: bool = os.getenv("AUTO_TRADE_ENABLED", "false").lower() == "true"
 BINANCE_TESTNET_API_KEY: str = os.getenv("BINANCE_TESTNET_API_KEY", "")
 BINANCE_TESTNET_SECRET: str = os.getenv("BINANCE_TESTNET_SECRET", "")
-POSITION_SIZE_USD: float = float(os.getenv("POSITION_SIZE_USD", "100.0"))  # USD to spend per trade
+LEVERAGE: int = int(os.getenv("LEVERAGE", "100"))
+POSITION_SIZE_USD: float = float(os.getenv("POSITION_SIZE_USD", "100.0"))  # Notional size: $100 = just $1 margin @ 100x!
 
 # ── Technical Analysis ───────────────────────────────────────────────
 RSI_PERIOD: int = 14
@@ -39,17 +40,17 @@ TECHNICAL_WEIGHT: float = float(os.getenv("TECHNICAL_WEIGHT", "0.8"))
 SENTIMENT_WEIGHT: float = float(os.getenv("SENTIMENT_WEIGHT", "0.2"))
 CONFIDENCE_THRESHOLD: float = float(os.getenv("CONFIDENCE_THRESHOLD", "0.65"))
 COOLDOWN_SECONDS: int = int(os.getenv("COOLDOWN_SECONDS", "900"))  # 15 min
-MAX_CONCURRENT_TRADES: int = int(os.getenv("MAX_CONCURRENT_TRADES", "3"))  # max open trades at once
+MAX_CONCURRENT_TRADES: int = int(os.getenv("MAX_CONCURRENT_TRADES", "3"))  # 3 trades max ($3 total margin used)
 
 # ── Price Targets ────────────────────────────────────────────────────
 ATR_PERIOD: int = 14                                               # for stop-loss calc
-STOP_LOSS_ATR_MULTIPLIER: float = float(os.getenv("SL_ATR_MULT", "1.5"))
-RISK_REWARD_RATIO: float = float(os.getenv("RISK_REWARD", "2.0"))  # target = RR × risk
+STOP_LOSS_ATR_MULTIPLIER: float = float(os.getenv("SL_ATR_MULT", "0.3"))   # very tight because of 100x leverage!
+RISK_REWARD_RATIO: float = float(os.getenv("RISK_REWARD", "3.0"))  # target = RR × risk
 
 # ── Trailing Stop Loss ────────────────────────────────────────────────
 TRAILING_STOP_ENABLED: bool = os.getenv("TRAILING_STOP_ENABLED", "true").lower() == "true"
 TRAILING_STOP_ACTIVATION_PCT: float = float(os.getenv("TRAILING_STOP_ACTIVATION_PCT", "0.5"))  # activate at 50% to target
-TRAILING_STOP_DISTANCE_ATR: float = float(os.getenv("TRAILING_STOP_DISTANCE_ATR", "1.0"))       # trail by 1× ATR
+TRAILING_STOP_DISTANCE_ATR: float = float(os.getenv("TRAILING_STOP_DISTANCE_ATR", "0.2"))       # trail by 0.2× ATR (must be tighter than initial SL)
 
 # ── Telegram Notifications ──────────────────────────────────────────
 TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -57,8 +58,14 @@ TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
 TELEGRAM_API_URL: str = "https://api.telegram.org/bot{token}/sendMessage"
 
 # ── Orchestrator ─────────────────────────────────────────────────────
-POLL_INTERVAL: int = int(os.getenv("POLL_INTERVAL", "60"))  # seconds
+POLL_INTERVAL: int = int(os.getenv("POLL_INTERVAL", "15"))  # seconds (faster for 100x max leverage!)
 HEARTBEAT_INTERVAL_HOURS: int = int(os.getenv("HEARTBEAT_INTERVAL_HOURS", "6"))  # send alive ping every N hours
+
+# ── Session Filters ──────────────────────────────────────────────────
+# 0 = Monday, 6 = Sunday. If True, bot will not open NEW trades on Sat/Sun.
+AVOID_WEEKENDS: bool = os.getenv("AVOID_WEEKENDS", "false").lower() == "true"
+# Allowed UTC hours (e.g. 7 to 20 for London/NY). If empty, trades 24/7.
+ALLOWED_TRADING_HOURS_UTC: list[int] = []
 
 # ── Trade Tracker ────────────────────────────────────────────────────
 TRADE_UPDATE_INTERVAL: int = int(os.getenv("TRADE_UPDATE_INTERVAL", "300"))   # 5 min between updates
