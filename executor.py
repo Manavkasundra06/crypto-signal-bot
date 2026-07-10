@@ -44,7 +44,23 @@ def execute_entry(signal) -> dict:
         avg_price = order.get('average') or order.get('price') or price
         logger.info("✅ Entry Order Filled! ID: %s | Avg Price: %s", order.get('id', 'N/A'), avg_price)
         
-        # ── PLACE HARD STOPS ──────────────────────────────────────────
+        # ── EXACT SLIPPAGE ALIGNMENT FOR HARD STOPS ─────────────
+        # Wicks/slippage can cause the real entry price to differ from the tested price.
+        # We MUST shift the Target and Stop Loss precisely to match the real entry!
+        avg_price_flt = float(avg_price)
+        if signal.direction == 'BUY':
+            sl_dist = signal.entry_price - signal.stop_loss
+            tp_dist = signal.target - signal.entry_price
+            
+            signal.stop_loss = round(avg_price_flt - sl_dist, 6)
+            signal.target = round(avg_price_flt + tp_dist, 6)
+        else:
+            sl_dist = signal.stop_loss - signal.entry_price
+            tp_dist = signal.entry_price - signal.target
+            
+            signal.stop_loss = round(avg_price_flt + sl_dist, 6)
+            signal.target = round(avg_price_flt - tp_dist, 6)
+            
         inverse_side = 'sell' if side == 'buy' else 'buy'
         sl_id = ""
         tp_id = ""
@@ -69,7 +85,7 @@ def execute_entry(signal) -> dict:
             
         return {
             "success": True, 
-            "avg_price": float(avg_price),
+            "avg_price": avg_price_flt,
             "amount": float(amount),
             "sl_id": sl_id,
             "tp_id": tp_id

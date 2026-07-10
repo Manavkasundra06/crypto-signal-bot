@@ -42,10 +42,10 @@ CONFIDENCE_THRESHOLD: float = float(os.getenv("CONFIDENCE_THRESHOLD", "0.65"))
 COOLDOWN_SECONDS: int = int(os.getenv("COOLDOWN_SECONDS", "900"))  # 15 min
 MAX_CONCURRENT_TRADES: int = int(os.getenv("MAX_CONCURRENT_TRADES", "3"))  # 3 trades max ($3 total margin used)
 
-# ── Price Targets ────────────────────────────────────────────────────
-ATR_PERIOD: int = 14                                               # for stop-loss calc
-STOP_LOSS_ATR_MULTIPLIER: float = float(os.getenv("SL_ATR_MULT", "0.3"))   # very tight because of 100x leverage!
-RISK_REWARD_RATIO: float = float(os.getenv("RISK_REWARD", "3.0"))  # target = RR × risk
+# ── Risk Management ──────────────────────────────────────────────────
+# Tighter logic for High-Leverage / Micro-Account defense
+STOP_LOSS_ATR_MULTIPLIER: float = float(os.getenv("STOP_LOSS_ATR_MULTIPLIER", "1.2"))
+RISK_REWARD_RATIO: float = float(os.getenv("RISK_REWARD_RATIO", "2.0")) # Target is 2x the stop loss
 
 # ── Trailing Stop Loss ────────────────────────────────────────────────
 TRAILING_STOP_ENABLED: bool = os.getenv("TRAILING_STOP_ENABLED", "true").lower() == "true"
