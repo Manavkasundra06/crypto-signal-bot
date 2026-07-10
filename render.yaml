@@ -12,7 +12,7 @@ services:
       - key: TELEGRAM_CHAT_ID
         sync: false
       - key: POLL_INTERVAL
-        value: "60"
+        value: "15"
       - key: TRADE_UPDATE_INTERVAL
         value: "300"
       - key: CONFIDENCE_THRESHOLD
