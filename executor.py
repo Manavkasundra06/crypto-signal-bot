@@ -24,6 +24,13 @@ def execute_entry(signal) -> dict:
         except Exception as e:
             logger.warning("Could not set leverage to %s for %s. It might already be set: %s", config.LEVERAGE, signal.symbol, e)
 
+        # ── DUPLICATE ENTRY GUARD ────────────────────────────────────
+        # If the exchange already has a live position for this symbol, ABORT.
+        # This prevents re-entering after a false ghost-trade purge.
+        if is_position_open(signal.symbol):
+            logger.warning("⚠️ DUPLICATE ENTRY BLOCKED: %s already has an open position on Binance!", signal.symbol)
+            return {"success": False, "avg_price": 0, "amount": 0, "sl_id": "", "tp_id": ""}
+
         price = signal.entry_price
         
         # Calculate the raw amount
