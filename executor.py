@@ -179,7 +179,9 @@ def is_position_open(symbol: str) -> bool:
         positions = exchange.fetch_positions([symbol])
         
         for p in positions:
-            if p.get('symbol') == symbol and float(p.get('contracts', 0)) > 0:
+            p_symbol = p.get('symbol', '')
+            # CCXT Futures symbols often append ':USDT', so we check if the base asset is in the symbol
+            if symbol.split('/')[0] in p_symbol and float(p.get('contracts', 0)) > 0:
                 return True
                 
         return False # Missing from exchange!
