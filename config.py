@@ -44,6 +44,7 @@ MAX_CONCURRENT_TRADES: int = int(os.getenv("MAX_CONCURRENT_TRADES", "3"))  # 3 t
 
 # ── Risk Management ──────────────────────────────────────────────────
 # Tighter logic for High-Leverage / Micro-Account defense
+ATR_PERIOD: int = 14
 STOP_LOSS_ATR_MULTIPLIER: float = float(os.getenv("STOP_LOSS_ATR_MULTIPLIER", "1.2"))
 RISK_REWARD_RATIO: float = float(os.getenv("RISK_REWARD_RATIO", "2.0")) # Target is 2x the stop loss
 
