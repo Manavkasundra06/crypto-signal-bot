@@ -121,18 +121,80 @@ def scan_symbol(symbol: str, dry_run: bool = False) -> None:
         logger.info("No actionable signal for %s", symbol)
         return
 
-    # 5 — Notify
+    # 5 — Notify (PENDING signal — trade not yet confirmed)
     sent_ok = send_alert(sig, dry_run=dry_run)
     if not sent_ok and not dry_run:
         logger.warning("Alert for %s was not delivered", symbol)
 
-    # 6 — Execute Entry
+    # 6 — Signal Confirmation Delay (wait and re-validate before executing)
     if not dry_run and getattr(config, "AUTO_TRADE_ENABLED", False):
+        delay = getattr(config, "SIGNAL_CONFIRMATION_DELAY", 50)
+        tolerance = getattr(config, "ENTRY_PRICE_TOLERANCE_PCT", 0.15)
+        
+        logger.info("⏳ CONFIRMATION WAIT: Holding %s signal for %ds before executing...", symbol, delay)
+        _send_simple(
+            f"⏳ *CONFIRMING SIGNAL*\n\n"
+            f"Waiting {delay}s to verify {_escape_md(sig.direction)} {_escape_md(symbol)} "
+            f"near entry zone `{_escape_md(f'${sig.entry_price:,.2f}')}`\\.\\.\\.",
+            dry_run=dry_run
+        )
+        
+        # Wait in small increments so we can abort on shutdown
+        for _ in range(delay):
+            if not _running:
+                return
+            time.sleep(1)
+        
+        # Re-fetch the LIVE price after waiting
+        from data_pipeline import fetch_live_prices
+        fresh_prices = fetch_live_prices([symbol])
+        live_price = fresh_prices.get(symbol)
+        
+        if live_price is None:
+            logger.error("Could not fetch confirmation price for %s. Aborting trade.", symbol)
+            _send_simple(f"❌ *SIGNAL CANCELLED*\n\nCould not verify price for {_escape_md(symbol)}\\.", dry_run=dry_run)
+            return
+        
+        # Calculate how much the price drifted AGAINST us
+        drift_pct = ((live_price - sig.entry_price) / sig.entry_price) * 100
+        
+        # For BUY: price dropping too far is bad (negative drift)
+        # For SELL: price rising too far is bad (positive drift)
+        if sig.direction == "BUY" and drift_pct < -tolerance:
+            logger.warning("❌ BUY signal CANCELLED for %s: Price dropped %.2f%% (%.2f → %.2f)", 
+                          symbol, abs(drift_pct), sig.entry_price, live_price)
+            _send_simple(
+                f"❌ *SIGNAL CANCELLED — FAKE\\-OUT DETECTED*\n\n"
+                f"{_escape_md(symbol)} price dropped `{_escape_md(f'{abs(drift_pct):.2f}')}%` "
+                f"during confirmation\\. Trade aborted\\.",
+                dry_run=dry_run
+            )
+            return
+        elif sig.direction == "SELL" and drift_pct > tolerance:
+            logger.warning("❌ SELL signal CANCELLED for %s: Price rose %.2f%% (%.2f → %.2f)",
+                          symbol, drift_pct, sig.entry_price, live_price)
+            _send_simple(
+                f"❌ *SIGNAL CANCELLED — FAKE\\-OUT DETECTED*\n\n"
+                f"{_escape_md(symbol)} price rose `{_escape_md(f'{drift_pct:.2f}')}%` "
+                f"during confirmation\\. Trade aborted\\.",
+                dry_run=dry_run
+            )
+            return
+        
+        # CONFIRMED — Price held or moved in our favour!
+        logger.info("✅ Signal CONFIRMED for %s! Price drift: %+.2f%% (within %.2f%% tolerance)", 
+                    symbol, drift_pct, tolerance)
+        _send_simple(
+            f"✅ *SIGNAL CONFIRMED*\n\n"
+            f"Price held steady\\. Executing {_escape_md(sig.direction)} on {_escape_md(symbol)} now\\!",
+            dry_run=dry_run
+        )
+        
         exec_result = executor.execute_entry(sig)
         if not exec_result["success"]:
             logger.error("Auto-trade execution failed for %s. Discarding signal.", symbol)
             _send_simple(f"❌ *AUTO\\-TRADE FAILED*\n\nThe scheduled {_escape_md(sig.direction)} trade for {_escape_md(symbol)} could not be opened on Binance\\. Discarding signal\\.", dry_run=dry_run)
-            return  # ABORT: Do not track it internally to save our limited slots!
+            return
             
         # Update the tracked entry price to precisely match Binance's fill price
         fill_price = exec_result["avg_price"]

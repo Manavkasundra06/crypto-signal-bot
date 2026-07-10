@@ -62,6 +62,14 @@ TELEGRAM_API_URL: str = "https://api.telegram.org/bot{token}/sendMessage"
 POLL_INTERVAL: int = int(os.getenv("POLL_INTERVAL", "15"))  # seconds (faster for 100x max leverage!)
 HEARTBEAT_INTERVAL_HOURS: int = int(os.getenv("HEARTBEAT_INTERVAL_HOURS", "6"))  # send alive ping every N hours
 
+# ── Signal Confirmation ──────────────────────────────────────────────
+# Wait this many seconds after sending alert before executing trade.
+# During this time, re-validate price to filter out fake-outs.
+SIGNAL_CONFIRMATION_DELAY: int = int(os.getenv("SIGNAL_CONFIRMATION_DELAY", "50"))
+# Max allowed price drift (%) from signal entry during confirmation.
+# If price drifts MORE than this against the trade direction, cancel it.
+ENTRY_PRICE_TOLERANCE_PCT: float = float(os.getenv("ENTRY_PRICE_TOLERANCE_PCT", "0.15"))
+
 # ── Session Filters ──────────────────────────────────────────────────
 # 0 = Monday, 6 = Sunday. If True, bot will not open NEW trades on Sat/Sun.
 AVOID_WEEKENDS: bool = os.getenv("AVOID_WEEKENDS", "false").lower() == "true"
