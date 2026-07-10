@@ -107,7 +107,7 @@ def _send_pnl_report(chat_id: int):
     else:
         lines.append("_No active trades right now._")
 
-    footer = "🤖 _TESTNET AUTO-TRADE EXECUTED_" if getattr(config, "AUTO_TRADE_ENABLED", False) else "⚠️ _SIGNAL ONLY — No real trades executed_"
+    footer = "🤖 _TESTNET AUTO\\-TRADE EXECUTED_" if getattr(config, "AUTO_TRADE_ENABLED", False) else "⚠️ _SIGNAL ONLY — No real trades executed_"
     lines += ["", footer]
 
     _send_message(chat_id, "\n".join(lines))

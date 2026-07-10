@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 def _get_footer() -> str:
     if getattr(config, "AUTO_TRADE_ENABLED", False):
-        return "🤖 _TESTNET AUTO-TRADE EXECUTED_"
+        return "🤖 _TESTNET AUTO\\-TRADE EXECUTED_"
     return "⚠️ _SIGNAL ONLY — No trades executed_"
 
 # ── Secondary cooldown (safety layer) ────────────────────────────────
