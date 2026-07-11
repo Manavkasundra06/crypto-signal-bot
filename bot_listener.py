@@ -64,26 +64,29 @@ def _send_pnl_report(chat_id: int):
 
     if closed_count > 0:
         pnl_emoji = "🟢" if report["total_pnl"] >= 0 else "🔴"
+        total_usd = report.get("total_pnl_usd", 0.0)
         lines += [
             "*── Closed Trades ──*",
             f"  Total: {closed_count}",
             f"  ✅ Wins: {report['wins']}  |  🛑 Losses: {report['losses']}",
             f"  Win Rate: {report['win_rate']:.1f}%",
-            f"  {pnl_emoji} Total P&L: {report['total_pnl']:+.2f}%",
+            f"  {pnl_emoji} Total P&L: {report['total_pnl']:+.2f}% (${total_usd:+.2f})",
             f"  Avg P&L/trade: {report['avg_pnl']:+.2f}%",
         ]
         best = report.get("best_trade")
         worst = report.get("worst_trade")
         if best:
-            lines.append(f"  🏆 Best: {best['symbol']} {best['direction']} → {best['pnl_percent']:+.2f}%")
+            lines.append(f"  🏆 Best: {best['symbol']} {best['direction']} → {best['pnl_percent']:+.2f}% (${best.get('pnl_usd', 0.0):+.2f})")
         if worst:
-            lines.append(f"  💔 Worst: {worst['symbol']} {worst['direction']} → {worst['pnl_percent']:+.2f}%")
+            lines.append(f"  💔 Worst: {worst['symbol']} {worst['direction']} → {worst['pnl_percent']:+.2f}% (${worst.get('pnl_usd', 0.0):+.2f})")
 
         lines.append("")
         lines.append("*Trade Log:*")
         for i, t in enumerate(report["trades"], 1):
             em = {"target_hit": "🎯", "stop_loss_hit": "🛑", "expired": "⏱️", "emergency_exit": "🚨"}.get(t["event"], "•")
-            lines.append(f"  {i}. {em} {t['symbol']} {t['direction']} | {t['pnl_percent']:+.2f}% | {t['duration']}")
+            usd = t.get("pnl_usd", 0.0)
+            margin = t.get("margin", 0.0)
+            lines.append(f"  {i}. {em} {t['symbol']} {t['direction']} | {t['pnl_percent']:+.2f}% (${usd:+.2f}) | Margin: ${margin:.2f}")
     else:
         lines.append("_No closed trades today._")
 
@@ -98,12 +101,16 @@ def _send_pnl_report(chat_id: int):
         ]
         for t in portfolio["trades"]:
             pnl_em = "🟢" if t["pnl_percent"] >= 0 else "🔴"
+            usd = t.get("pnl_usd", 0.0)
+            margin = t.get("margin", 0.0)
             lines.append(
                 f"  {pnl_em} {t['symbol']} {t['direction']} | "
-                f"P&L: {t['pnl_percent']:+.2f}% | {t['duration']} | "
+                f"P&L: {t['pnl_percent']:+.2f}% (${usd:+.2f}) | "
+                f"Margin: ${margin:.2f} | "
                 f"Target: {t['distance_to_target']:.0f}% away"
             )
-        lines.append(f"  Avg unrealised P&L: {portfolio['avg_pnl']:+.2f}%")
+        total_active_usd = portfolio.get("total_pnl_usd", 0.0)
+        lines.append(f"  Avg unrealised P&L: {portfolio['avg_pnl']:+.2f}% (${total_active_usd:+.2f} total)")
     else:
         lines.append("_No active trades right now._")
 

@@ -38,6 +38,8 @@ def record_closed_trade(trade, event: str) -> None:
         "target":      trade.target,
         "pnl_percent": round(trade.pnl_percent, 3),
         "pnl_absolute": round(trade.pnl_absolute, 6),
+        "pnl_usd":    round(trade.pnl_usd, 2),
+        "margin":     round(trade.margin_deployed, 2),
         "duration":    trade.duration_str,
         "opened_at":   trade.opened_at,
         "closed_at":   time.time(),
@@ -98,6 +100,8 @@ def get_daily_report() -> dict:
 
     all_pnl = [t["pnl_percent"] for t in trades]
     total_pnl = round(sum(all_pnl), 2)
+    total_pnl_usd = round(sum(t.get("pnl_usd", 0.0) for t in trades), 2)
+    
     avg_pnl = round(total_pnl / len(trades), 2) if trades else 0.0
     win_rate = round(len(wins) / len(trades) * 100, 1) if trades else 0.0
 
@@ -113,6 +117,7 @@ def get_daily_report() -> dict:
         "emergency_exits": len(emergency),
         "win_rate":        win_rate,
         "total_pnl":       total_pnl,
+        "total_pnl_usd":   total_pnl_usd,
         "avg_pnl":         avg_pnl,
         "best_trade":      best,
         "worst_trade":     worst,

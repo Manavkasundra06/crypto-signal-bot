@@ -84,12 +84,22 @@ class ActiveTrade:
             return self.entry_price - self.current_price
 
     @property
-    def pnl_usd(self) -> float:
-        """Unrealised P&L in actual US Dollars, accounting for a 0.1% round-trip Binance fee."""
+    def notional_size(self) -> float:
+        """The total position size in quote currency."""
+        return self.amount * self.entry_price
+
+    @property
+    def margin_deployed(self) -> float:
+        """The actual absolute margin (USDT) locked in this trade."""
         import config
-        gross_profit = (self.pnl_percent / 100) * config.POSITION_SIZE_USD
+        return self.notional_size / config.LEVERAGE
+
+    @property
+    def pnl_usd(self) -> float:
+        """Unrealised P&L in actual US Dollars, using real dynamic sizing amount."""
+        gross_profit = (self.pnl_percent / 100) * self.notional_size
         # Binance taker fee is typically 0.05% per side, so 0.1% total on the notional size
-        estimated_fees = config.POSITION_SIZE_USD * 0.001 
+        estimated_fees = self.notional_size * 0.001 
         return gross_profit - estimated_fees
 
     @property
@@ -217,6 +227,8 @@ def close_trade(symbol: str, status: TradeStatus = TradeStatus.MANUALLY_CLOSED) 
     """
     trade = _active_trades.pop(symbol, None)
     if trade:
+        if getattr(config, "AUTO_TRADE_ENABLED", False):
+            executor.execute_exit(trade)
         trade.status = status
         _save_trades()
         logger.info(
@@ -280,6 +292,8 @@ def update_trades(dry_run: bool = False) -> list[dict]:
             trade.status = TradeStatus.EXPIRED
             trade.update_count += 1
             updates.append({"trade": trade, "event": "expired"})
+            if getattr(config, "AUTO_TRADE_ENABLED", False):
+                executor.execute_exit(trade)
             _active_trades.pop(symbol)
             _save_trades()
             report_tracker.record_closed_trade(trade, "expired")
@@ -309,6 +323,8 @@ def update_trades(dry_run: bool = False) -> list[dict]:
             trade.update_count += 1
             updates.append({"trade": trade, "event": event})
             
+            if getattr(config, "AUTO_TRADE_ENABLED", False):
+                executor.execute_exit(trade)
             _active_trades.pop(symbol)
             _save_trades()
             report_tracker.record_closed_trade(trade, event)
@@ -340,6 +356,8 @@ def update_trades(dry_run: bool = False) -> list[dict]:
                 trade.status = TradeStatus.MANUALLY_CLOSED
                 trade.update_count += 1
                 updates.append({"trade": trade, "event": "emergency_exit"})
+                if getattr(config, "AUTO_TRADE_ENABLED", False):
+                    executor.execute_exit(trade)
                 _active_trades.pop(symbol)
                 _save_trades()
                 report_tracker.record_closed_trade(trade, "emergency_exit")
@@ -418,9 +436,9 @@ def update_trades(dry_run: bool = False) -> list[dict]:
             updates.append({"trade": trade, "event": "update"})
             _save_trades()  # Checkpoint state to save updated counters
             logger.info(
-                "📊 Update #%d for %s: price=%.6f, P&L=%+.2f%%, TP dist=%.1f%%",
+                "📊 Update #%d for %s: price=%.6f, P&L=%+.2f%% ($%+.2f), TP dist=%.1f%%",
                 trade.update_count, symbol, live_price,
-                trade.pnl_percent, trade.distance_to_target_pct,
+                trade.pnl_percent, trade.pnl_usd, trade.distance_to_target_pct,
             )
 
     return updates
@@ -433,19 +451,24 @@ def get_portfolio_summary() -> dict:
 
     trade_summaries = []
     total_pnl = 0.0
+    total_pnl_usd = 0.0
 
     for symbol, trade in _active_trades.items():
         trade_summaries.append({
             "symbol": symbol,
             "direction": trade.direction,
             "pnl_percent": round(trade.pnl_percent, 2),
+            "pnl_usd": round(trade.pnl_usd, 2),
+            "margin": round(trade.margin_deployed, 2),
             "duration": trade.duration_str,
             "distance_to_target": round(trade.distance_to_target_pct, 1),
         })
         total_pnl += trade.pnl_percent
+        total_pnl_usd += trade.pnl_usd
 
     return {
         "count": len(_active_trades),
-        "avg_pnl": round(total_pnl / len(_active_trades), 2),
+        "avg_pnl": round(total_pnl / len(_active_trades), 2) if _active_trades else 0.0,
+        "total_pnl_usd": round(total_pnl_usd, 2),
         "trades": trade_summaries,
     }
