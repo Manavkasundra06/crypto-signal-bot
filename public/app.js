@@ -149,10 +149,31 @@ function createChartContainer(symbol, direction) {
     
     const header = document.createElement('div');
     header.className = 'chart-header';
-    header.innerHTML = `<span class="chart-title">${symbol}</span> <span class="chart-direction ${direction}">${direction || 'LIVE'}</span>`;
+    header.innerHTML = `<div><span class="chart-title">${symbol}</span> <span class="chart-direction ${direction}">${direction || 'LIVE'}</span></div>`;
+    
+    const maxBtn = document.createElement('button');
+    maxBtn.className = 'maximize-btn';
+    maxBtn.innerHTML = '⛶ Maximize';
+    maxBtn.onclick = () => {
+        card.classList.toggle('fullscreen');
+        if (card.classList.contains('fullscreen')) {
+            maxBtn.innerHTML = '🗗 Restore';
+            document.body.style.overflow = 'hidden';
+        } else {
+            maxBtn.innerHTML = '⛶ Maximize';
+            document.body.style.overflow = 'auto';
+        }
+    };
+    header.appendChild(maxBtn);
     
     const chartDiv = document.createElement('div');
     chartDiv.className = 'chart-container';
+    chartDiv.style.position = 'relative'; // For floating legend
+    
+    const legend = document.createElement('div');
+    legend.className = 'floating-legend';
+    legend.innerHTML = `${symbol} <br/> O<span class="legend-value">--</span> H<span class="legend-value">--</span> L<span class="legend-value">--</span> C<span class="legend-value">--</span> V<span class="legend-value">--</span>`;
+    chartDiv.appendChild(legend);
     
     card.appendChild(header);
     card.appendChild(chartDiv);
@@ -177,6 +198,36 @@ function createChartContainer(symbol, direction) {
     
     const ema50Series = chart.addLineSeries({ color: '#ff9900', lineWidth: 2, title: 'EMA(50)' });
     const ema200Series = chart.addLineSeries({ color: '#b366ff', lineWidth: 2, title: 'EMA(200)' });
+    
+    // Crosshair Sync for Legend
+    chart.subscribeCrosshairMove((param) => {
+        if (param.point === undefined || !param.time || param.point.x < 0 || param.point.x > chartDiv.clientWidth || param.point.y < 0 || param.point.y > chartDiv.clientHeight) {
+            legend.innerHTML = `${symbol} <br/> O<span class="legend-value">--</span> H<span class="legend-value">--</span> L<span class="legend-value">--</span> C<span class="legend-value">--</span> V<span class="legend-value">--</span>`;
+            return;
+        }
+        
+        const candleData = param.seriesData.get(candlestickSeries);
+        const volData = param.seriesData.get(volumeSeries);
+        
+        if (candleData) {
+            const isGreen = candleData.close >= candleData.open;
+            const cClass = isGreen ? 'legend-profit' : 'legend-loss';
+            legend.innerHTML = `${symbol} <br/> 
+                O <span class="legend-value ${cClass}">${candleData.open.toFixed(2)}</span> 
+                H <span class="legend-value ${cClass}">${candleData.high.toFixed(2)}</span> 
+                L <span class="legend-value ${cClass}">${candleData.low.toFixed(2)}</span> 
+                C <span class="legend-value ${cClass}">${candleData.close.toFixed(2)}</span> 
+                V <span class="legend-value">${volData ? volData.value.toFixed(2) : '--'}</span>`;
+        }
+    });
+    
+    // Auto Resize
+    const resizeObserver = new ResizeObserver(entries => {
+        if (entries.length === 0 || entries[0].target !== chartDiv) return;
+        const newRect = entries[0].contentRect;
+        chart.applyOptions({ width: newRect.width, height: newRect.height });
+    });
+    resizeObserver.observe(chartDiv);
     
     return { chart, series: candlestickSeries, volSeries: volumeSeries, ema50: ema50Series, ema200: ema200Series, domElement: card };
 }

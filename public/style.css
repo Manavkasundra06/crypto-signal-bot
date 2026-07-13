@@ -93,3 +93,55 @@ tr:last-child td { border-bottom: none; }
     height: 400px;
     width: 100%;
 }
+
+
+/* TradingView Pro Features */
+.chart-card.fullscreen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 9999;
+    border-radius: 0;
+    background: #0b0f19;
+    display: flex;
+    flex-direction: column;
+}
+.chart-card.fullscreen .chart-container {
+    flex-grow: 1;
+    height: auto;
+}
+.maximize-btn {
+    background: rgba(255, 255, 255, 0.1);
+    border: none;
+    color: var(--text-muted);
+    border-radius: 4px;
+    padding: 4px 8px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition: all 0.2s;
+    margin-left: 10px;
+}
+.maximize-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+    color: var(--text-main);
+}
+
+.floating-legend {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    z-index: 10;
+    font-size: 0.8rem;
+    font-family: monospace;
+    color: var(--text-muted);
+    pointer-events: none;
+    background: rgba(10, 14, 23, 0.6);
+    padding: 6px;
+    border-radius: 4px;
+    line-height: 1.4;
+}
+.legend-value { color: var(--text-main); font-weight: 600; margin-right: 8px; }
+.legend-profit { color: var(--accent-green); }
+.legend-loss { color: var(--accent-red); }
