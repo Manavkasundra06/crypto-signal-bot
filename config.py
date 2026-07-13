@@ -114,3 +114,8 @@ USE_EMA20_TRIGGER: bool = os.getenv("USE_EMA20_TRIGGER", "true").lower() == "tru
 # ── Smart Money Concepts (SMC) ──────────────────────────────────────────────
 USE_SMC_LOGIC: bool = os.getenv("USE_SMC_LOGIC", "true").lower() == "true"
 SMC_WEIGHT: float = float(os.getenv("SMC_WEIGHT", "0.2"))
+
+
+# ── Zombie Trade Fix (Testnet Resiliency) ───────────────────────────────
+MAX_API_FAILURES: int = int(os.getenv("MAX_API_FAILURES", "5"))
+DUST_NOTIONAL_THRESHOLD: float = float(os.getenv("DUST_NOTIONAL_THRESHOLD", "1.0"))

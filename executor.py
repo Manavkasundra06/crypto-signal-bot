@@ -212,22 +212,46 @@ def execute_exit(trade) -> bool:
     logger.error("🚨 CRITICAL: Completely failed to close %s after %d retries! Position may still be open on Binance!", trade.symbol, config.MAX_RETRIES)
     return False
 
+_api_failure_counts: dict[str, int] = {}
+
 def is_position_open(symbol: str) -> bool:
-    """Checks if there's an active position for the symbol on the exchange."""
+    """Checks if there's an active position for the symbol on the exchange, with API resilience and dust filtering."""
     if not config.AUTO_TRADE_ENABLED:
-        return True  # Always assume open if paper trading
+        return True
         
     try:
         exchange = _get_exchange()
         positions = exchange.fetch_positions([symbol])
         
+        _api_failure_counts[symbol] = 0
+        
         for p in positions:
             p_symbol = p.get('symbol', '')
-            # CCXT Futures symbols often append ':USDT', so we check if the base asset is in the symbol
-            if symbol.split('/')[0] in p_symbol and float(p.get('contracts', 0)) > 0:
-                return True
+            if symbol.split('/')[0] in p_symbol:
+                contracts = float(p.get('contracts', 0))
+                notional = float(p.get('notional', 0))
                 
-        return False # Missing from exchange!
+                if notional == 0 and contracts > 0:
+                    price = float(p.get('markPrice') or p.get('entryPrice') or 0.0)
+                    notional = contracts * price
+                
+                dust_threshold = getattr(config, "DUST_NOTIONAL_THRESHOLD", 1.0)
+                if contracts > 0 and notional >= dust_threshold:
+                    return True
+                elif contracts > 0:
+                    logger.info("Ignoring Dust Position for %s: %s contracts, $%.2f notional", symbol, contracts, notional)
+                
+        return False
+        
     except Exception as e:
-        logger.warning("Could not verify position for %s: %s", symbol, e)
-        return True # Default to true on API error so we don't falsely close real trades
+        failures = _api_failure_counts.get(symbol, 0) + 1
+        _api_failure_counts[symbol] = failures
+        max_failures = getattr(config, "MAX_API_FAILURES", 5)
+        
+        if failures >= max_failures:
+            logger.error("dYs API Sync Override: %s failed %d consecutive times. Forcing trade closed to prevent Zombie state!", symbol, failures)
+            _api_failure_counts[symbol] = 0
+            return False
+            
+        logger.warning("Could not verify position for %s (Attempt %d/%d): %s", symbol, failures, max_failures, e)
+        return True
