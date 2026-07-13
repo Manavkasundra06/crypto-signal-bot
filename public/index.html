@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto Signal Bot Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="background-glow"></div>
+    <div class="dashboard-container">
+        <header class="glass-panel">
+            <h1>Dark Newton <span>Intelligence</span></h1>
+            <div class="status-indicator">
+                <span class="pulse"></span> System Live
+            </div>
+        </header>
+
+        <section class="kpi-grid">
+            <div class="kpi-card glass-panel">
+                <h3>Total P&L (USD)</h3>
+                <h2 id="kpi-pnl-usd" class="glow-text">$0.00</h2>
+            </div>
+            <div class="kpi-card glass-panel">
+                <h3>Total P&L (INR)</h3>
+                <h2 id="kpi-pnl-inr" class="glow-text">₹0.00</h2>
+            </div>
+            <div class="kpi-card glass-panel">
+                <h3>Win Rate</h3>
+                <h2 id="kpi-winrate">0.0%</h2>
+            </div>
+            <div class="kpi-card glass-panel">
+                <h3>Active Trades</h3>
+                <h2 id="kpi-active-count">0</h2>
+            </div>
+        </section>
+
+        <section class="trades-section glass-panel">
+            <h2>Active Positions</h2>
+            <div class="table-container">
+                <table id="active-trades-table">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Side</th>
+                            <th>Entry</th>
+                            <th>Current</th>
+                            <th>P&L (%)</th>
+                            <th>P&L (INR)</th>
+                            <th>Duration</th>
+                        </tr>
+                    </thead>
+                    <tbody id="active-trades-body">
+                        <!-- JS renders here -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>

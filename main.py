@@ -20,9 +20,51 @@ import sys
 import time
 
 def keep_alive():
-    """Starts a dummy web server so Render doesn't shut us down."""
+    """Starts a secure web server serving the dashboard from public/."""
     port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), SimpleHTTPRequestHandler)
+    
+    class SecureDashboardHandler(SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            # Ensure the public directory exists
+            pub_dir = os.path.join(os.getcwd(), "public")
+            if not os.path.exists(pub_dir):
+                os.makedirs(pub_dir)
+            super().__init__(*args, directory=pub_dir, **kwargs)
+            
+        def do_GET(self):
+            # Intercept API calls to safely serve JSON data from the root
+            if self.path == '/api/trades.json':
+                self._serve_json_file(os.path.join(os.getcwd(), "trades.json"))
+                return
+            elif self.path == '/api/performance.json':
+                self._serve_json_file(os.path.join(os.getcwd(), "performance.json"))
+                return
+                
+            # Otherwise, serve static files from public/
+            super().do_GET()
+            
+        def _serve_json_file(self, filepath):
+            try:
+                if os.path.exists(filepath):
+                    with open(filepath, 'rb') as f:
+                        data = f.read()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+                    self.wfile.write(b'{}')
+            except Exception as e:
+                self.send_response(500)
+                self.end_headers()
+                
+        def log_message(self, format, *args):
+            pass # Suppress HTTP logs to avoid console spam
+
+    server = HTTPServer(("0.0.0.0", port), SecureDashboardHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
 import config
