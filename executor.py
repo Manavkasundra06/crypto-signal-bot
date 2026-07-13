@@ -255,3 +255,54 @@ def is_position_open(symbol: str) -> bool:
             
         logger.warning("Could not verify position for %s (Attempt %d/%d): %s", symbol, failures, max_failures, e)
         return True
+
+
+def update_stop_loss(trade, new_sl_price: float) -> bool:
+    """Cancels the old SL and places a new one at Breakeven/Trailing."""
+    if not config.AUTO_TRADE_ENABLED:
+        return False
+    try:
+        exchange = _get_exchange()
+        
+        # Cancel old SL
+        if trade.sl_order_id:
+            try:
+                exchange.cancel_order(trade.sl_order_id, trade.symbol)
+                logger.info("Cancelled old SL for %s", trade.symbol)
+            except Exception as e:
+                logger.warning("Could not cancel old SL %s: %s", trade.sl_order_id, e)
+                
+        # Place new SL
+        side = "sell" if trade.direction == "BUY" else "buy"
+        params = {
+            'stopPrice': float(new_sl_price),
+            'reduceOnly': True,
+            'workingType': 'MARK_PRICE'
+        }
+        
+        # Load markets for precision formatting
+        exchange.load_markets()
+        market = exchange.market(trade.symbol)
+        amount_fmt = float(exchange.amount_to_precision(trade.symbol, trade.amount))
+        sl_fmt = float(exchange.price_to_precision(trade.symbol, new_sl_price))
+        
+        sl_order = exchange.create_order(
+            symbol=trade.symbol,
+            type='STOP_MARKET',
+            side=side,
+            amount=amount_fmt,
+            price=None,
+            params=params
+        )
+        
+        if sl_order and 'id' in sl_order:
+            trade.sl_order_id = str(sl_order['id'])
+            trade.stop_loss = sl_fmt
+            logger.info("dY>` Moved SL for %s to %.6f", trade.symbol, sl_fmt)
+            return True
+            
+    except Exception as exc:
+        logger.error("Failed to update SL for %s: %s", trade.symbol, exc)
+        return False
+        
+    return False

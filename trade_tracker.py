@@ -339,6 +339,48 @@ def update_trades(dry_run: bool = False) -> list[dict]:
             trade.peak_price = min(trade.peak_price, live_price)
             trade.worst_price = max(trade.worst_price, live_price)
 
+        # -- Elite Feature: Breakeven & Step-Trailing Stop Loss --
+        # 1. Move to Breakeven at 50% TP progress
+        # 2. Lock 50% Profit at 75% TP progress
+        # 3. Lock 75% Profit at 90% TP progress
+        
+        if trade.distance_to_target_pct >= 50.0:
+            new_sl = None
+            
+            # Calculate milestones
+            dist_total = trade.target - trade.entry_price if trade.direction == "BUY" else trade.entry_price - trade.target
+            breakeven = trade.entry_price
+            lock_50 = trade.entry_price + (dist_total * 0.5) if trade.direction == "BUY" else trade.entry_price - (dist_total * 0.5)
+            lock_75 = trade.entry_price + (dist_total * 0.75) if trade.direction == "BUY" else trade.entry_price - (dist_total * 0.75)
+            
+            # Determine which tier we qualify for
+            if trade.distance_to_target_pct >= 90.0:
+                proposed_sl = lock_75
+            elif trade.distance_to_target_pct >= 75.0:
+                proposed_sl = lock_50
+            else:
+                proposed_sl = breakeven
+                
+            # Check if this proposed SL is better than the current SL
+            if trade.direction == "BUY" and proposed_sl > trade.stop_loss:
+                new_sl = proposed_sl
+            elif trade.direction == "SELL" and proposed_sl < trade.stop_loss:
+                new_sl = proposed_sl
+                
+            if new_sl:
+                logger.info("\U0001f512 Securing profits! Moving SL for %s to %.6f (Progress: %.1f%%)", symbol, new_sl, trade.distance_to_target_pct)
+                if getattr(config, "AUTO_TRADE_ENABLED", False) and not dry_run:
+                    success = executor.update_stop_loss(trade, new_sl)
+                    if success:
+                        trade.stop_loss = new_sl
+                        _save_trades()
+                        # Also send a quick telegram alert
+                        from notifier import _send_simple, _escape_md
+                        _send_simple(f"\U0001f512 *TRAILING STOP UPDATED*\n\nLocked in profits for {_escape_md(symbol)}\.\nNew Stop Loss: `{_escape_md(str(new_sl))}`")
+                else:
+                    trade.stop_loss = new_sl
+                    _save_trades()
+
         # ── Check News / Sentiment for Emergency Exit ───────────────
         try:
             sent = fetch_sentiment(symbol)
