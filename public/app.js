@@ -18,6 +18,8 @@ window.addEventListener('unhandledrejection', function(e) {
 
 const USD_INR_RATE = 83.5;
 
+let currentSymbolsKey = null;
+
 async function fetchDashboardData() {
     try {
         const perfRes = await fetch('/api/performance.json');
@@ -32,7 +34,15 @@ async function fetchDashboardData() {
             trades = await tradesRes.json();
         }
         updateTradesTable(trades);
-        renderCharts(trades);
+        
+        // Only re-render charts if the active trade symbols have changed
+        let newSymbolsKey = Object.keys(trades).sort().join(',');
+        if (newSymbolsKey === "") newSymbolsKey = "default";
+        
+        if (newSymbolsKey !== currentSymbolsKey) {
+            currentSymbolsKey = newSymbolsKey;
+            renderCharts(trades);
+        }
     } catch (e) {
         console.error("Dashboard Sync Error:", e);
     }
