@@ -37,6 +37,8 @@ def _escape_md(text: str) -> str:
 
 
 def _format_alert(signal) -> str:
+    margin_usd = (signal.amount * signal.entry_price) / config.LEVERAGE
+    margin_inr = margin_usd * config.USD_INR_RATE
     """Build a human-readable Telegram message from a Signal object."""
     tech = signal.technicals_breakdown
     sent = signal.sentiment_breakdown
@@ -53,6 +55,10 @@ def _format_alert(signal) -> str:
         "",
         f"*Direction:* {direction_emoji} {_escape_md(signal.direction)}",
         f"*Confidence:* {_escape_md(confidence_pct)}%",
+        "",
+        f"\U0001f4b0 *Trade Execution*",
+        f"  Leverage: {_escape_md(str(config.LEVERAGE))}x",
+        f"  Investment: ${_escape_md(f'{margin_usd:.2f}')} \(₹{_escape_md(f'{margin_inr:.2f}')}\)",
         "",
         f"💵 *Price Levels*",
         f"  Entry Price: {_escape_md(str(signal.entry_price))}",
@@ -156,92 +162,77 @@ def _progress_bar(percent: float, length: int = 10) -> str:
 def _format_trade_update(trade) -> str:
     """Build a periodic trade update message."""
     pnl = trade.pnl_percent
-    pnl_emoji = "🟢" if pnl >= 0 else "🔴"
-    direction_emoji = "🟢" if trade.direction == "BUY" else "🔴"
-
-    # Progress toward target (clamped 0-100)
+    pnl_emoji = "\U0001f7e2" if pnl >= 0 else "\U0001f534"
+    direction_emoji = "\U0001f7e2" if trade.direction == "BUY" else "\U0001f534"
+    
     tp_progress = max(0, min(100, trade.distance_to_target_pct))
     tp_bar = _progress_bar(tp_progress)
-
+    
+    inr_val = trade.pnl_usd * getattr(config, 'USD_INR_RATE', 83.5)
+    
     lines = [
-        f"📊 *TRADE UPDATE* — {_escape_md(trade.symbol)}",
+        f"\U0001f4ca *TRADE UPDATE* — {_escape_md(trade.symbol)}",
         "",
         f"*Direction:* {direction_emoji} {_escape_md(trade.direction)}",
         f"*Duration:* {_escape_md(trade.duration_str)}",
-        f"*Update \\#{_escape_md(str(trade.update_count))}*",
+        f"*Update \#{_escape_md(str(trade.update_count))}*",
         "",
-        f"💰 *Price*",
+        f"\U0001f4b8 *Price*",
         f"  Entry: {_escape_md(str(trade.entry_price))}",
         f"  Current: {_escape_md(f'{trade.current_price:.6f}')}",
         f"  Best: {_escape_md(f'{trade.peak_price:.6f}')}",
         "",
-        f"{pnl_emoji} *P&L:* {_escape_md(f'{pnl:+.2f}')}% \\(Net: *\\${_escape_md(f'{trade.pnl_usd:+.2f}')}*\\)",
-        "",
-        f"🎯 *To Target:* {_escape_md(f'{tp_progress:.1f}')}%",
-        f"  {_escape_md(tp_bar)}",
-    ]
-    
-    if getattr(trade, "trailing_sl_active", False):
-        lines.append(f"  � *Trailed SL:* {_escape_md(str(trade.stop_loss))}")
-    else:
-        lines.append(f"  �🛑 SL: {_escape_md(str(trade.stop_loss))}")
-        
-    lines += [
-        f"  🎯 TP: {_escape_md(str(trade.target))}",
+        f"{pnl_emoji} *P&L:* {_escape_md(f'{pnl:+.2f}')}% \(Net: *\${_escape_md(f'{trade.pnl_usd:+.2f}')}* \| ₹{_escape_md(f'{inr_val:+.2f}')}\)",
+        f"  {tp_bar} {_escape_md(f'{tp_progress:.1f}')}% to TP",
         "",
         _get_footer(),
     ]
     return "\n".join(lines)
-
 
 def _format_trade_close(trade, event: str) -> str:
     """Build a trade-closed message (SL or TP hit)."""
     pnl = trade.pnl_percent
-
+    
     if event == "target_hit":
-        header = "🎯✅ *TARGET HIT*"
-        result_emoji = "🏆"
+        header = "\U0001f3af\U0001f4b0 *TARGET HIT*"
+        result_emoji = "\U0001f680"
         result_text = "PROFIT"
     elif event == "stop_loss_hit":
         if pnl > 0:
-            header = "🛑📈 *TRAILING STOP HIT*"
-            result_emoji = "🛡️"
+            header = "\U0001f6a8\U0001f4c8 *TRAILING STOP HIT*"
+            result_emoji = "\U0001f4b8"
             result_text = "SECURED PROFIT"
         else:
-            header = "🛑❌ *STOP LOSS HIT*"
-            result_emoji = "💔"
+            header = "\U0001f6a8\u26d4 *STOP LOSS HIT*"
+            result_emoji = "\U0001f4a5"
             result_text = "LOSS"
     elif event == "emergency_exit":
-        header = "🚨📰 *NEWS EMERGENCY EXIT*"
-        result_emoji = "⚠️"
+        header = "\U0001f6a8\U0001f4f0 *NEWS EMERGENCY EXIT*"
+        result_emoji = "\U0001f6a8"
         result_text = "MARKET FLIPPED"
     else:
-        header = "⏱️⚠️ *TRADE EXPIRED*"
-        result_emoji = "⌛"
-        result_text = "EXPIRED"
-
-    direction_emoji = "🟢" if trade.direction == "BUY" else "🔴"
-
+        header = "\u23f1\ufe0f *TRADE EXPIRED*"
+        result_emoji = "\u23f1\ufe0f"
+        result_text = "TIME LIMIT REACHED"
+        
+    inr_val = trade.pnl_usd * getattr(config, 'USD_INR_RATE', 83.5)
+    pnl_emoji = "\U0001f7e2" if pnl >= 0 else "\U0001f534"
+        
     lines = [
         f"{header} — {_escape_md(trade.symbol)}",
         "",
-        f"{result_emoji} *Result:* {_escape_md(result_text)}",
-        f"*Direction:* {direction_emoji} {_escape_md(trade.direction)}",
-        f"*Duration:* {_escape_md(trade.duration_str)}",
-        f"*Updates sent:* {_escape_md(str(trade.update_count))}",
+        f"*{result_text}* {result_emoji}",
+        f"Direction: {_escape_md(trade.direction)}",
+        f"Duration: {_escape_md(trade.duration_str)}",
         "",
-        f"💵 *Final Numbers*",
-        f"  Entry: {_escape_md(str(trade.entry_price))}",
-        f"  Exit: {_escape_md(f'{trade.current_price:.6f}')}",
-        f"  Best: {_escape_md(f'{trade.peak_price:.6f}')}",
-        f"  Worst: {_escape_md(f'{trade.worst_price:.6f}')}",
+        f"\U0001f4b8 Entry: {_escape_md(str(trade.entry_price))}",
+        f"\U0001f4b8 Exit: {_escape_md(str(trade.current_price))}",
         "",
-        f"{'🟢' if pnl >= 0 else '🔴'} *Final P&L:* {_escape_md(f'{pnl:+.2f}')}%",
+        f"{pnl_emoji} *Final P&L:* {_escape_md(f'{pnl:+.2f}')}% \(Net: *\${_escape_md(f'{trade.pnl_usd:+.2f}')}* \| ₹{_escape_md(f'{inr_val:+.2f}')}\)",
         "",
         _get_footer(),
     ]
     return "\n".join(lines)
-
 
 def send_trade_update(trade, event: str, dry_run: bool = False) -> bool:
     """

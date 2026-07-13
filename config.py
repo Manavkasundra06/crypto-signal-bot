@@ -119,3 +119,7 @@ SMC_WEIGHT: float = float(os.getenv("SMC_WEIGHT", "0.2"))
 # ── Zombie Trade Fix (Testnet Resiliency) ───────────────────────────────
 MAX_API_FAILURES: int = int(os.getenv("MAX_API_FAILURES", "5"))
 DUST_NOTIONAL_THRESHOLD: float = float(os.getenv("DUST_NOTIONAL_THRESHOLD", "1.0"))
+
+
+# ── Currency Conversion ─────────────────────────────────────────────────
+USD_INR_RATE: float = float(os.getenv("USD_INR_RATE", "83.5"))
