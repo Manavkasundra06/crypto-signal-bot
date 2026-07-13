@@ -1,3 +1,21 @@
+
+// GLOBAL ERROR HANDLER FOR DEBUGGING
+window.addEventListener('error', function(e) {
+    const errDiv = document.createElement('div');
+    errDiv.style = "background: red; color: white; padding: 20px; z-index: 9999; font-size: 16px;";
+    errDiv.textContent = "JS ERROR: " + e.message + " at " + e.filename + ":" + e.lineno;
+    document.body.prepend(errDiv);
+});
+window.addEventListener('unhandledrejection', function(e) {
+    const errDiv = document.createElement('div');
+    errDiv.style = "background: orange; color: white; padding: 20px; z-index: 9999; font-size: 16px;";
+    errDiv.textContent = "PROMISE ERROR: " + (e.reason ? (e.reason.message || e.reason) : e);
+    if(e.reason && e.reason.stack) {
+        errDiv.textContent += " | STACK: " + e.reason.stack.substring(0, 200);
+    }
+    document.body.prepend(errDiv);
+});
+
 const USD_INR_RATE = 83.5;
 
 async function fetchDashboardData() {
