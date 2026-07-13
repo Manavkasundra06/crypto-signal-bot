@@ -9,11 +9,12 @@ async function fetchDashboardData() {
         }
 
         const tradesRes = await fetch('/api/trades.json');
+        let trades = {};
         if(tradesRes.ok) {
-            const trades = await tradesRes.json();
-            updateTradesTable(trades);
-            renderCharts(trades);
+            trades = await tradesRes.json();
         }
+        updateTradesTable(trades);
+        renderCharts(trades);
     } catch (e) {
         console.error("Dashboard Sync Error:", e);
     }
