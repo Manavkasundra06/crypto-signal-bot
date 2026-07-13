@@ -41,20 +41,26 @@ def keep_alive():
                 return
             elif self.path.startswith('/api/klines'):
                 import urllib.parse
-                import urllib.request
                 import json
+                import ccxt
                 try:
                     parsed_path = urllib.parse.urlparse(self.path)
                     query = urllib.parse.parse_qs(parsed_path.query)
-                    symbol = query.get('symbol', ['BTCUSDT'])[0]
-                    interval = query.get('interval', ['5m'])[0]
-                    limit = query.get('limit', ['250'])[0]
+                    # CCXT expects "BTC/USDT", frontend passed "BTCUSDT", let's fix it
+                    raw_symbol = query.get('symbol', ['BTCUSDT'])[0]
+                    if "USDT" in raw_symbol and "/" not in raw_symbol:
+                        symbol = raw_symbol.replace("USDT", "/USDT")
+                    else:
+                        symbol = raw_symbol
                     
-                    url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
-                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-                    with urllib.request.urlopen(req) as response:
-                        data = response.read()
-                        
+                    interval = query.get('interval', ['5m'])[0]
+                    limit = int(query.get('limit', ['250'])[0])
+                    
+                    exchange = ccxt.binance({'enableRateLimit': True})
+                    ohlcv = exchange.fetch_ohlcv(symbol, timeframe=interval, limit=limit)
+                    
+                    data = json.dumps(ohlcv).encode('utf-8')
+                    
                     self.send_response(200)
                     self.send_header('Content-Type', 'application/json')
                     self.send_header('Access-Control-Allow-Origin', '*')
@@ -62,6 +68,9 @@ def keep_alive():
                     self.end_headers()
                     self.wfile.write(data)
                 except Exception as e:
+                    import traceback
+                    print("CCXT PROXY ERROR:", e)
+                    traceback.print_exc()
                     self.send_response(500)
                     self.end_headers()
                     self.wfile.write(b'[]')
@@ -92,7 +101,8 @@ def keep_alive():
         def log_message(self, format, *args):
             pass # Suppress HTTP logs to avoid console spam
 
-    server = HTTPServer(("0.0.0.0", port), SecureDashboardHandler)
+    from http.server import ThreadingHTTPServer
+    server = ThreadingHTTPServer(("0.0.0.0", port), SecureDashboardHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
 import config
