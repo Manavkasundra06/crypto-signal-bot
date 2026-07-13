@@ -181,6 +181,21 @@ def compute_technicals(df_5m: pd.DataFrame, df_15m: pd.DataFrame, df_1h: pd.Data
     
     current_price = float(df_5m["close"].iloc[-1])
 
+    # ── EMA 20 (5m) ────────────────────────────────────────────────────────
+    ema20_series = df_5m["close"].ewm(span=20, adjust=False).mean()
+    ema20 = float(ema20_series.iloc[-1])
+
+    # ── Daily VWAP (5m) ────────────────────────────────────────────────────
+    df_5m["tp"] = (df_5m["high"] + df_5m["low"] + df_5m["close"]) / 3.0
+    df_5m["tp_v"] = df_5m["tp"] * df_5m["volume"]
+    df_5m["date"] = df_5m["timestamp"].dt.date
+    daily_groups = df_5m.groupby("date")
+    df_5m["cum_vol"] = daily_groups["volume"].cumsum()
+    df_5m["cum_tp_v"] = daily_groups["tp_v"].cumsum()
+    df_5m["vwap"] = df_5m["cum_tp_v"] / df_5m["cum_vol"]
+    vwap_value = float(df_5m["vwap"].iloc[-1])
+
+
     # ── Momentum (15m) ───────────────────────────────────────────────
     momentum_score = _macd_score(df_15m)
     
@@ -221,6 +236,8 @@ def compute_technicals(df_5m: pd.DataFrame, df_15m: pd.DataFrame, df_1h: pd.Data
         "fib_levels": fib_levels,
         "swing_high": fib_data.get("swing_high"),
         "swing_low": fib_data.get("swing_low"),
+        "ema20": round(ema20, 6),
+        "vwap": round(vwap_value, 6),
     }
 
     logger.info("Multi-Timeframe Techs: RSI=%.0f Vol=%.1f Momentum=%.0f Trend=%.0f -> %s", 

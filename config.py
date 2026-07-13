@@ -104,3 +104,8 @@ RETRY_BACKOFF_BASE: float = 2.0  # exponential backoff multiplier
 # ── Fibonacci Strategy ──────────────────────────────────────────────────────
 FIB_LOOKBACK_PERIOD: int = int(os.getenv("FIB_LOOKBACK_PERIOD", "200"))
 USE_FIB_TARGETS: bool = os.getenv("USE_FIB_TARGETS", "true").lower() == "true"
+
+
+# ── Institutional Filters (VWAP & EMA20) ────────────────────────────────────
+USE_VWAP_FILTER: bool = os.getenv("USE_VWAP_FILTER", "true").lower() == "true"
+USE_EMA20_TRIGGER: bool = os.getenv("USE_EMA20_TRIGGER", "true").lower() == "true"

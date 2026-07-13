@@ -204,6 +204,28 @@ def evaluate(
                     symbol, volume_ratio, config.VOLUME_GATE_RATIO)
         return None
 
+
+    # ── Institutional Filters (VWAP & EMA20) ──────────────────────────────────
+    current_price = technical_scores.get("current_price", 0.0)
+    vwap = technical_scores.get("vwap", 0.0)
+    ema20 = technical_scores.get("ema20", 0.0)
+    
+    if getattr(config, "USE_VWAP_FILTER", True) and vwap > 0:
+        if direction == "BUY" and current_price < vwap:
+            logger.info("%s — Price (%.4f) below Daily VWAP (%.4f). Blocking BUY signal.", symbol, current_price, vwap)
+            return None
+        elif direction == "SELL" and current_price > vwap:
+            logger.info("%s — Price (%.4f) above Daily VWAP (%.4f). Blocking SELL signal.", symbol, current_price, vwap)
+            return None
+            
+    if getattr(config, "USE_EMA20_TRIGGER", True) and ema20 > 0:
+        if direction == "BUY" and current_price < ema20:
+            logger.info("%s — Price (%.4f) below 5m 20 EMA (%.4f). Blocking BUY signal.", symbol, current_price, ema20)
+            return None
+        elif direction == "SELL" and current_price > ema20:
+            logger.info("%s — Price (%.4f) above 5m 20 EMA (%.4f). Blocking SELL signal.", symbol, current_price, ema20)
+            return None
+
     # ── Price levels ─────────────────────────────────────────────────
     current_price = technical_scores.get("current_price", 0.0)
     atr = technical_scores.get("atr", 0.0)
@@ -230,6 +252,8 @@ def evaluate(
             "composite_score": tech_score,
             "bias": technical_scores.get("signal_bias"),
             "atr": technical_scores.get("atr", 0.0),
+            "ema20": technical_scores.get("ema20", 0.0),
+            "vwap": technical_scores.get("vwap", 0.0),
         },
         sentiment_breakdown={
             "score": sent_score,
