@@ -90,6 +90,6 @@ tr:last-child td { border-bottom: none; }
 .chart-direction.BUY { color: var(--accent-green); }
 .chart-direction.SELL { color: var(--accent-red); }
 .chart-container {
-    height: 300px;
+    height: 400px;
     width: 100%;
 }

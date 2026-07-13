@@ -89,10 +89,23 @@ setInterval(fetchDashboardData, 5000);
 fetchDashboardData();
 
 
+
 // --- TradingView Charting Logic ---
 const activeCharts = {}; // { symbol: { chart, series, domElement } }
 
-async function fetchBinanceKlines(symbol, interval='5m', limit=100) {
+function calculateEMA(data, period) {
+    const k = 2 / (period + 1);
+    let emaData = [];
+    if(data.length === 0) return emaData;
+    let ema = data[0].close;
+    for (let i = 0; i < data.length; i++) {
+        ema = (data[i].close - ema) * k + ema;
+        emaData.push({ time: data[i].time, value: ema });
+    }
+    return emaData;
+}
+
+async function fetchBinanceKlines(symbol, interval='5m', limit=250) {
     const formattedSymbol = symbol.replace('/', '');
     const url = `https://api.binance.com/api/v3/klines?symbol=${formattedSymbol}&interval=${interval}&limit=${limit}`;
     const res = await fetch(url);
@@ -102,7 +115,9 @@ async function fetchBinanceKlines(symbol, interval='5m', limit=100) {
         open: parseFloat(d[1]),
         high: parseFloat(d[2]),
         low: parseFloat(d[3]),
-        close: parseFloat(d[4])
+        close: parseFloat(d[4]),
+        value: parseFloat(d[5]), // Volume
+        color: parseFloat(d[4]) >= parseFloat(d[1]) ? 'rgba(0, 255, 136, 0.4)' : 'rgba(255, 51, 102, 0.4)'
     }));
 }
 
@@ -135,7 +150,16 @@ function createChartContainer(symbol, direction) {
         upColor: '#00ff88', downColor: '#ff3366', borderVisible: false, wickUpColor: '#00ff88', wickDownColor: '#ff3366'
     });
     
-    return { chart, series: candlestickSeries, domElement: card };
+    const volumeSeries = chart.addHistogramSeries({
+        priceFormat: { type: 'volume' },
+        priceScaleId: '', // Overlay at bottom
+        scaleMargins: { top: 0.8, bottom: 0 },
+    });
+    
+    const ema50Series = chart.addLineSeries({ color: '#ff9900', lineWidth: 2, title: 'EMA(50)' });
+    const ema200Series = chart.addLineSeries({ color: '#b366ff', lineWidth: 2, title: 'EMA(200)' });
+    
+    return { chart, series: candlestickSeries, volSeries: volumeSeries, ema50: ema50Series, ema200: ema200Series, domElement: card };
 }
 
 async function renderCharts(tradesObj) {
@@ -143,7 +167,6 @@ async function renderCharts(tradesObj) {
     const tradesList = Object.values(tradesObj);
     
     if (tradesList.length === 0) {
-        // Default charts if no active trades
         symbolsToRender = [
             { symbol: 'BTC/USDT', direction: '' }, 
             { symbol: 'ETH/USDT', direction: '' }
@@ -155,20 +178,22 @@ async function renderCharts(tradesObj) {
     }
     
     const grid = document.getElementById('charts-grid');
-    grid.innerHTML = ''; // Clear old charts
+    grid.innerHTML = '';
     
     for (const item of symbolsToRender) {
-        const { chart, series, domElement } = createChartContainer(item.symbol, item.direction);
+        const { chart, series, volSeries, ema50, ema200, domElement } = createChartContainer(item.symbol, item.direction);
         
         try {
             const klines = await fetchBinanceKlines(item.symbol);
             series.setData(klines);
+            volSeries.setData(klines);
+            ema50.setData(calculateEMA(klines, 50));
+            ema200.setData(calculateEMA(klines, 200));
             
             // Draw Trade Overlays
             if (item.trade) {
                 const t = item.trade;
                 
-                // Entry Line
                 series.createPriceLine({
                     price: t.entry_price,
                     color: '#00ff88',
@@ -178,7 +203,6 @@ async function renderCharts(tradesObj) {
                     title: 'ENTRY',
                 });
                 
-                // Stop Loss Line
                 series.createPriceLine({
                     price: t.stop_loss,
                     color: '#ff3366',
@@ -188,7 +212,6 @@ async function renderCharts(tradesObj) {
                     title: 'SL',
                 });
                 
-                // Target Line
                 series.createPriceLine({
                     price: t.target,
                     color: '#00b8ff',
