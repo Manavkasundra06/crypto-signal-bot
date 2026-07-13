@@ -203,42 +203,56 @@ async function renderCharts(tradesObj) {
         const { chart, series, volSeries, ema50, ema200, domElement } = createChartContainer(item.symbol, item.direction);
         
         try {
-            const klines = await fetchBinanceKlines(item.symbol);
-            series.setData(klines);
-            volSeries.setData(klines);
-            ema50.setData(calculateEMA(klines, 50));
-            ema200.setData(calculateEMA(klines, 200));
+            const rawKlines = await fetchBinanceKlines(item.symbol);
+            if (!rawKlines || rawKlines.length === 0) {
+                console.error("No data for", item.symbol);
+                continue;
+            }
+            
+            const candleData = rawKlines.map(d => ({ time: Math.floor(d.time), open: d.open, high: d.high, low: d.low, close: d.close }));
+            const volData = rawKlines.map(d => ({ time: Math.floor(d.time), value: d.value, color: d.color }));
+            const ema50Data = calculateEMA(rawKlines, 50).map(d => ({ time: Math.floor(d.time), value: d.value }));
+            const ema200Data = calculateEMA(rawKlines, 200).map(d => ({ time: Math.floor(d.time), value: d.value }));
+            
+            series.setData(candleData);
+            volSeries.setData(volData);
+            ema50.setData(ema50Data);
+            ema200.setData(ema200Data);
             
             // Draw Trade Overlays
             if (item.trade) {
                 const t = item.trade;
                 
-                series.createPriceLine({
-                    price: t.entry_price,
-                    color: '#00ff88',
-                    lineWidth: 2,
-                    lineStyle: LightweightCharts.LineStyle.Solid,
-                    axisLabelVisible: true,
-                    title: 'ENTRY',
-                });
-                
-                series.createPriceLine({
-                    price: t.stop_loss,
-                    color: '#ff3366',
-                    lineWidth: 2,
-                    lineStyle: LightweightCharts.LineStyle.Dashed,
-                    axisLabelVisible: true,
-                    title: 'SL',
-                });
-                
-                series.createPriceLine({
-                    price: t.target,
-                    color: '#00b8ff',
-                    lineWidth: 2,
-                    lineStyle: LightweightCharts.LineStyle.Dashed,
-                    axisLabelVisible: true,
-                    title: 'TP',
-                });
+                if (t.entry_price > 0) {
+                    series.createPriceLine({
+                        price: t.entry_price,
+                        color: '#00ff88',
+                        lineWidth: 2,
+                        lineStyle: LightweightCharts.LineStyle.Solid,
+                        axisLabelVisible: true,
+                        title: 'ENTRY',
+                    });
+                }
+                if (t.stop_loss > 0) {
+                    series.createPriceLine({
+                        price: t.stop_loss,
+                        color: '#ff3366',
+                        lineWidth: 2,
+                        lineStyle: LightweightCharts.LineStyle.Dashed,
+                        axisLabelVisible: true,
+                        title: 'SL',
+                    });
+                }
+                if (t.target > 0) {
+                    series.createPriceLine({
+                        price: t.target,
+                        color: '#00b8ff',
+                        lineWidth: 2,
+                        lineStyle: LightweightCharts.LineStyle.Dashed,
+                        axisLabelVisible: true,
+                        title: 'TP',
+                    });
+                }
             }
             
             chart.timeScale().fitContent();
