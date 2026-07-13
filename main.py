@@ -44,6 +44,9 @@ def keep_alive():
                 import json
                 import ccxt
                 try:
+                    global _proxy_exchange
+                    if '_proxy_exchange' not in globals():
+                        _proxy_exchange = ccxt.binance({'enableRateLimit': True})
                     parsed_path = urllib.parse.urlparse(self.path)
                     query = urllib.parse.parse_qs(parsed_path.query)
                     # CCXT expects "BTC/USDT", frontend passed "BTCUSDT", let's fix it
@@ -56,8 +59,7 @@ def keep_alive():
                     interval = query.get('interval', ['5m'])[0]
                     limit = int(query.get('limit', ['250'])[0])
                     
-                    exchange = ccxt.binance({'enableRateLimit': True})
-                    ohlcv = exchange.fetch_ohlcv(symbol, timeframe=interval, limit=limit)
+                    ohlcv = _proxy_exchange.fetch_ohlcv(symbol, timeframe=interval, limit=limit)
                     
                     data = json.dumps(ohlcv).encode('utf-8')
                     
