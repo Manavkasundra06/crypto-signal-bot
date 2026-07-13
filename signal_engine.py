@@ -254,6 +254,9 @@ def evaluate(
             "atr": technical_scores.get("atr", 0.0),
             "ema20": technical_scores.get("ema20", 0.0),
             "vwap": technical_scores.get("vwap", 0.0),
+            "fvg_status": technical_scores.get("fvg_status", "NONE"),
+            "sweep_status": technical_scores.get("sweep_status", "NONE"),
+            "smc_score": technical_scores.get("smc_score", 50.0),
         },
         sentiment_breakdown={
             "score": sent_score,

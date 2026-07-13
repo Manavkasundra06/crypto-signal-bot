@@ -109,3 +109,8 @@ USE_FIB_TARGETS: bool = os.getenv("USE_FIB_TARGETS", "true").lower() == "true"
 # ── Institutional Filters (VWAP & EMA20) ────────────────────────────────────
 USE_VWAP_FILTER: bool = os.getenv("USE_VWAP_FILTER", "true").lower() == "true"
 USE_EMA20_TRIGGER: bool = os.getenv("USE_EMA20_TRIGGER", "true").lower() == "true"
+
+
+# ── Smart Money Concepts (SMC) ──────────────────────────────────────────────
+USE_SMC_LOGIC: bool = os.getenv("USE_SMC_LOGIC", "true").lower() == "true"
+SMC_WEIGHT: float = float(os.getenv("SMC_WEIGHT", "0.2"))

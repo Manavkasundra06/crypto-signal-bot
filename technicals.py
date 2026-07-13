@@ -148,6 +148,55 @@ def _fibonacci_score(df: pd.DataFrame) -> dict:
         "levels": levels
     }
 
+def _detect_fvg(df: pd.DataFrame, current_price: float) -> str:
+    """Scans for the most recent unmitigated Fair Value Gap."""
+    if len(df) < 3: return "NONE"
+    
+    for i in range(len(df)-1, 1, -1):
+        low_current = float(df["low"].iloc[i])
+        high_prev2 = float(df["high"].iloc[i-2])
+        high_current = float(df["high"].iloc[i])
+        low_prev2 = float(df["low"].iloc[i-2])
+        
+        if low_current > high_prev2:
+            gap_top = low_current
+            gap_bottom = high_prev2
+            mitigated = False
+            for j in range(i+1, len(df)):
+                if float(df["low"].iloc[j]) < gap_bottom:
+                    mitigated = True
+                    break
+            if not mitigated:
+                if current_price >= gap_bottom and current_price <= gap_top * 1.005:
+                    return "BULLISH_FVG"
+                break
+                
+        if high_current < low_prev2:
+            gap_bottom = high_current
+            gap_top = low_prev2
+            mitigated = False
+            for j in range(i+1, len(df)):
+                if float(df["high"].iloc[j]) > gap_top:
+                    mitigated = True
+                    break
+            if not mitigated:
+                if current_price <= gap_top and current_price >= gap_bottom * 0.995:
+                    return "BEARISH_FVG"
+                break
+    return "NONE"
+
+def _detect_liquidity_sweep(df: pd.DataFrame, swing_high: float, swing_low: float) -> str:
+    """Checks the last 5 candles for a liquidity sweep."""
+    if len(df) < 5 or not swing_high or not swing_low: return "NONE"
+    df_recent = df.tail(5)
+    
+    for _, row in df_recent.iterrows():
+        if float(row["low"]) < swing_low and float(row["close"]) > swing_low:
+            return "BULLISH_SWEEP"
+        if float(row["high"]) > swing_high and float(row["close"]) < swing_high:
+            return "BEARISH_SWEEP"
+    return "NONE"
+
 def compute_technicals(df_5m: pd.DataFrame, df_15m: pd.DataFrame, df_1h: pd.DataFrame) -> dict:
     """
     Analyse Multi-Timeframe OHLCV candles (5m, 15m, 1h).
@@ -209,15 +258,30 @@ def compute_technicals(df_5m: pd.DataFrame, df_15m: pd.DataFrame, df_1h: pd.Data
     fib_score = fib_data.get("score", 50.0)
     fib_levels = fib_data.get("levels", {})
 
+    # ── Smart Money Concepts (SMC) ─────────────────────────────────────────
+    fvg_status = _detect_fvg(df_15m, current_price)
+    sweep_status = _detect_liquidity_sweep(df_5m, fib_data.get("swing_high"), fib_data.get("swing_low"))
+    
+    smc_score_val = 50.0
+    if sweep_status == "BULLISH_SWEEP": smc_score_val += 30.0
+    elif sweep_status == "BEARISH_SWEEP": smc_score_val -= 30.0
+    
+    if fvg_status == "BULLISH_FVG": smc_score_val += 20.0
+    elif fvg_status == "BEARISH_FVG": smc_score_val -= 20.0
+    smc_score_val = max(0.0, min(100.0, smc_score_val))
+
     # ── Composite ────────────────────────────────────────────────────────────
     fib_weight = getattr(config, "FIB_WEIGHT", 0.2)
-    rem = 1.0 - fib_weight
+    smc_weight = getattr(config, "SMC_WEIGHT", 0.2) if getattr(config, "USE_SMC_LOGIC", True) else 0.0
+    rem = 1.0 - (fib_weight + smc_weight)
+    
     composite = (
         (0.25 * rem) * rsi_score
         + (0.15 * rem) * volume_score
         + (0.30 * rem) * momentum_score
         + (0.30 * rem) * trend_score
         + fib_weight * fib_score
+        + smc_weight * smc_score_val
     )
     composite = round(composite, 2)
 
@@ -238,6 +302,9 @@ def compute_technicals(df_5m: pd.DataFrame, df_15m: pd.DataFrame, df_1h: pd.Data
         "swing_low": fib_data.get("swing_low"),
         "ema20": round(ema20, 6),
         "vwap": round(vwap_value, 6),
+        "fvg_status": fvg_status,
+        "sweep_status": sweep_status,
+        "smc_score": round(smc_score_val, 2),
     }
 
     logger.info("Multi-Timeframe Techs: RSI=%.0f Vol=%.1f Momentum=%.0f Trend=%.0f -> %s", 
