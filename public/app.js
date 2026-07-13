@@ -12,6 +12,7 @@ async function fetchDashboardData() {
         if(tradesRes.ok) {
             const trades = await tradesRes.json();
             updateTradesTable(trades);
+            renderCharts(tradesObj);
         }
     } catch (e) {
         console.error("Dashboard Sync Error:", e);
@@ -86,3 +87,121 @@ function formatDuration(unixStart) {
 
 setInterval(fetchDashboardData, 5000);
 fetchDashboardData();
+
+
+// --- TradingView Charting Logic ---
+const activeCharts = {}; // { symbol: { chart, series, domElement } }
+
+async function fetchBinanceKlines(symbol, interval='5m', limit=100) {
+    const formattedSymbol = symbol.replace('/', '');
+    const url = `https://api.binance.com/api/v3/klines?symbol=${formattedSymbol}&interval=${interval}&limit=${limit}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    return data.map(d => ({
+        time: d[0] / 1000,
+        open: parseFloat(d[1]),
+        high: parseFloat(d[2]),
+        low: parseFloat(d[3]),
+        close: parseFloat(d[4])
+    }));
+}
+
+function createChartContainer(symbol, direction) {
+    const grid = document.getElementById('charts-grid');
+    document.getElementById('charts-section').style.display = 'block';
+    
+    const card = document.createElement('div');
+    card.className = 'chart-card';
+    
+    const header = document.createElement('div');
+    header.className = 'chart-header';
+    header.innerHTML = `<span class="chart-title">${symbol}</span> <span class="chart-direction ${direction}">${direction || 'LIVE'}</span>`;
+    
+    const chartDiv = document.createElement('div');
+    chartDiv.className = 'chart-container';
+    
+    card.appendChild(header);
+    card.appendChild(chartDiv);
+    grid.appendChild(card);
+    
+    const chart = LightweightCharts.createChart(chartDiv, {
+        layout: { background: { type: 'solid', color: 'transparent' }, textColor: '#8b9bb4' },
+        grid: { vertLines: { visible: false }, horzLines: { color: 'rgba(255, 255, 255, 0.05)' } },
+        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+        timeScale: { timeVisible: true, secondsVisible: false },
+    });
+    
+    const candlestickSeries = chart.addCandlestickSeries({
+        upColor: '#00ff88', downColor: '#ff3366', borderVisible: false, wickUpColor: '#00ff88', wickDownColor: '#ff3366'
+    });
+    
+    return { chart, series: candlestickSeries, domElement: card };
+}
+
+async function renderCharts(tradesObj) {
+    let symbolsToRender = [];
+    const tradesList = Object.values(tradesObj);
+    
+    if (tradesList.length === 0) {
+        // Default charts if no active trades
+        symbolsToRender = [
+            { symbol: 'BTC/USDT', direction: '' }, 
+            { symbol: 'ETH/USDT', direction: '' }
+        ];
+    } else {
+        symbolsToRender = tradesList.map(t => ({ 
+            symbol: t.symbol, direction: t.direction, trade: t 
+        }));
+    }
+    
+    const grid = document.getElementById('charts-grid');
+    grid.innerHTML = ''; // Clear old charts
+    
+    for (const item of symbolsToRender) {
+        const { chart, series, domElement } = createChartContainer(item.symbol, item.direction);
+        
+        try {
+            const klines = await fetchBinanceKlines(item.symbol);
+            series.setData(klines);
+            
+            // Draw Trade Overlays
+            if (item.trade) {
+                const t = item.trade;
+                
+                // Entry Line
+                series.createPriceLine({
+                    price: t.entry_price,
+                    color: '#00ff88',
+                    lineWidth: 2,
+                    lineStyle: LightweightCharts.LineStyle.Solid,
+                    axisLabelVisible: true,
+                    title: 'ENTRY',
+                });
+                
+                // Stop Loss Line
+                series.createPriceLine({
+                    price: t.stop_loss,
+                    color: '#ff3366',
+                    lineWidth: 2,
+                    lineStyle: LightweightCharts.LineStyle.Dashed,
+                    axisLabelVisible: true,
+                    title: 'SL',
+                });
+                
+                // Target Line
+                series.createPriceLine({
+                    price: t.target,
+                    color: '#00b8ff',
+                    lineWidth: 2,
+                    lineStyle: LightweightCharts.LineStyle.Dashed,
+                    axisLabelVisible: true,
+                    title: 'TP',
+                });
+            }
+            
+            chart.timeScale().fitContent();
+        } catch (e) {
+            console.error(`Failed to load chart for ${item.symbol}`, e);
+        }
+    }
+}

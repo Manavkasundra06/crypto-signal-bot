@@ -6,6 +6,7 @@
     <title>Crypto Signal Bot Dashboard</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
     <div class="background-glow"></div>
@@ -36,6 +37,11 @@
             </div>
         </section>
 
+        
+        <section id="charts-section" class="glass-panel" style="margin-bottom: 2rem; padding: 2rem; display: none;">
+            <h2 style="margin-bottom: 1.5rem; font-weight: 600;">Live Trade Visualization</h2>
+            <div id="charts-grid" class="charts-grid"></div>
+        </section>
         <section class="trades-section glass-panel">
             <h2>Active Positions</h2>
             <div class="table-container">

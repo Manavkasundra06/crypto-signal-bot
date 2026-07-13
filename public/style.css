@@ -60,3 +60,36 @@ tr:last-child td { border-bottom: none; }
 .tag-sell { background: rgba(255,51,102,0.1); color: var(--accent-red); padding: 4px 8px; border-radius: 4px; font-size: 0.8rem; }
 .val-profit { color: var(--accent-green); }
 .val-loss { color: var(--accent-red); }
+
+
+/* Chart Grid */
+.charts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    gap: 2rem;
+}
+.chart-card {
+    background: rgba(10, 14, 23, 0.8);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    padding: 1rem;
+    position: relative;
+    overflow: hidden;
+}
+.chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+.chart-title {
+    font-weight: 800;
+    color: var(--text-main);
+    letter-spacing: 1px;
+}
+.chart-direction.BUY { color: var(--accent-green); }
+.chart-direction.SELL { color: var(--accent-red); }
+.chart-container {
+    height: 300px;
+    width: 100%;
+}
