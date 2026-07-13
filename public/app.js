@@ -108,7 +108,7 @@ function calculateEMA(data, period) {
 
 async function fetchBinanceKlines(symbol, interval='5m', limit=250) {
     const formattedSymbol = symbol.replace('/', '');
-    const url = `https://api.binance.com/api/v3/klines?symbol=${formattedSymbol}&interval=${interval}&limit=${limit}`;
+    const url = `/api/klines?symbol=${formattedSymbol}&interval=${interval}&limit=${limit}`;
     const res = await fetch(url);
     const data = await res.json();
     return data.map(d => ({

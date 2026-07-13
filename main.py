@@ -39,6 +39,34 @@ def keep_alive():
             elif self.path == '/api/performance.json':
                 self._serve_json_file(os.path.join(os.getcwd(), "performance.json"))
                 return
+            elif self.path.startswith('/api/klines'):
+                import urllib.parse
+                import urllib.request
+                import json
+                try:
+                    parsed_path = urllib.parse.urlparse(self.path)
+                    query = urllib.parse.parse_qs(parsed_path.query)
+                    symbol = query.get('symbol', ['BTCUSDT'])[0]
+                    interval = query.get('interval', ['5m'])[0]
+                    limit = query.get('limit', ['250'])[0]
+                    
+                    url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
+                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                    with urllib.request.urlopen(req) as response:
+                        data = response.read()
+                        
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.send_header('Content-Length', str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                except Exception as e:
+                    self.send_response(500)
+                    self.end_headers()
+                    self.wfile.write(b'[]')
+                return
+
                 
             # Otherwise, serve static files from public/
             super().do_GET()
