@@ -95,25 +95,45 @@ def reset_cooldown(symbol: str | None = None) -> None:
 
 
 def _compute_price_levels(
-    direction: str, current_price: float, atr: float,
+    direction: str, current_price: float, atr: float, fib_levels: dict = None
 ) -> tuple[float, float, float]:
     """
-    Compute entry, stop-loss, and target from ATR.
-
-    BUY:  SL = entry − (ATR × multiplier),  target = entry + (risk × RR ratio)
-    SELL: SL = entry + (ATR × multiplier),  target = entry − (risk × RR ratio)
+    Compute entry, stop-loss, and target from ATR, optionally using Fibonacci extensions/retracements.
     """
     risk = atr * config.STOP_LOSS_ATR_MULTIPLIER
-
+    use_fib = getattr(config, "USE_FIB_TARGETS", True) and fib_levels
+    
     if direction == "BUY":
         stop_loss = current_price - risk
         target = current_price + (risk * config.RISK_REWARD_RATIO)
+        if use_fib:
+            exts = [v for k, v in fib_levels.items() if k >= 1.0 and v > current_price]
+            if exts:
+                target = min(exts)
+            
+            rets = [v for k, v in fib_levels.items() if k <= 1.0 and v < current_price]
+            if rets:
+                closest_ret = max(rets)
+                fib_sl = closest_ret - (atr * 0.5)
+                if current_price - fib_sl < risk * 1.5:
+                    stop_loss = fib_sl
+                    
     else:  # SELL
         stop_loss = current_price + risk
         target = current_price - (risk * config.RISK_REWARD_RATIO)
+        if use_fib:
+            exts = [v for k, v in fib_levels.items() if v < current_price]
+            if exts:
+                target = max(exts)
+                
+            rets = [v for k, v in fib_levels.items() if v > current_price]
+            if rets:
+                closest_ret = min(rets)
+                fib_sl = closest_ret + (atr * 0.5)
+                if fib_sl - current_price < risk * 1.5:
+                    stop_loss = fib_sl
 
     return current_price, round(stop_loss, 6), round(target, 6)
-
 
 def evaluate(
     symbol: str,
@@ -187,8 +207,9 @@ def evaluate(
     # ── Price levels ─────────────────────────────────────────────────
     current_price = technical_scores.get("current_price", 0.0)
     atr = technical_scores.get("atr", 0.0)
+    fib_levels = technical_scores.get("fib_levels", {})
     entry_price, stop_loss, target = _compute_price_levels(
-        direction, current_price, atr
+        direction, current_price, atr, fib_levels
     )
 
     # ── Build signal ─────────────────────────────────────────────────

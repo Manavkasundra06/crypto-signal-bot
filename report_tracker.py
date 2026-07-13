@@ -138,12 +138,5 @@ def get_daily_loss_count() -> int:
 
 
 def is_circuit_breaker_active() -> bool:
-    """Check if the daily loss limit has been reached."""
-    import config
-    losses_today = get_daily_loss_count()
-    max_losses = getattr(config, "MAX_DAILY_LOSSES", 3)
-    if losses_today >= max_losses:
-        logger.warning("🚫 CIRCUIT BREAKER ACTIVE: %d/%d daily losses reached. No new trades allowed.", 
-                       losses_today, max_losses)
-        return True
+    """Check if the daily loss limit has been reached. (Disabled by user request)"""
     return False

@@ -98,6 +98,56 @@ def _trend_score(df: pd.DataFrame) -> float:
         return 35.0   # Weak downtrend
 
 
+
+def _fibonacci_score(df: pd.DataFrame) -> dict:
+    """
+    Calculate the macro swing high and low over the lookback period,
+    derive the Fibonacci retracement levels, and score the current price.
+    """
+    if len(df) < 50:
+        return {"score": 50.0, "levels": {}}
+        
+    lookback = getattr(config, "FIB_LOOKBACK_PERIOD", 200)
+    df_lookback = df.tail(lookback)
+    
+    swing_high = float(df_lookback["high"].max())
+    swing_low = float(df_lookback["low"].min())
+    current_price = float(df["close"].iloc[-1])
+    
+    diff = swing_high - swing_low
+    if diff == 0:
+        return {"score": 50.0, "levels": {}}
+        
+    levels = {
+        0.0: swing_low,
+        0.236: swing_low + diff * 0.236,
+        0.382: swing_low + diff * 0.382,
+        0.5: swing_low + diff * 0.5,
+        0.618: swing_low + diff * 0.618,
+        0.786: swing_low + diff * 0.786,
+        1.0: swing_high,
+        1.272: swing_high + diff * 0.272,
+        1.618: swing_high + diff * 0.618,
+    }
+    
+    pocket_mid = (levels[0.5] + levels[0.618]) / 2.0
+    pocket_width = abs(levels[0.618] - levels[0.5])
+    
+    dist = abs(current_price - pocket_mid)
+    
+    if dist < pocket_width:
+        score = 100.0
+    else:
+        decay = (dist / diff) * 100.0
+        score = max(50.0, 100.0 - decay)
+        
+    return {
+        "score": round(score, 2),
+        "swing_high": swing_high,
+        "swing_low": swing_low,
+        "levels": levels
+    }
+
 def compute_technicals(df_5m: pd.DataFrame, df_15m: pd.DataFrame, df_1h: pd.DataFrame) -> dict:
     """
     Analyse Multi-Timeframe OHLCV candles (5m, 15m, 1h).
@@ -139,12 +189,20 @@ def compute_technicals(df_5m: pd.DataFrame, df_15m: pd.DataFrame, df_1h: pd.Data
 
     # ── Composite ────────────────────────────────────────────────────
     # Reproportion weights to incorporate momentum and trend
-    # volume: 15%, rsi (timing): 25%, momentum (15m): 30%, trend (1h): 30%
+    # ── Fibonacci (1h) ────────────────────────────────────────────────────────
+    fib_data = _fibonacci_score(df_1h)
+    fib_score = fib_data.get("score", 50.0)
+    fib_levels = fib_data.get("levels", {})
+
+    # ── Composite ────────────────────────────────────────────────────────────
+    fib_weight = getattr(config, "FIB_WEIGHT", 0.2)
+    rem = 1.0 - fib_weight
     composite = (
-        0.25 * rsi_score
-        + 0.15 * volume_score
-        + 0.30 * momentum_score
-        + 0.30 * trend_score
+        (0.25 * rem) * rsi_score
+        + (0.15 * rem) * volume_score
+        + (0.30 * rem) * momentum_score
+        + (0.30 * rem) * trend_score
+        + fib_weight * fib_score
     )
     composite = round(composite, 2)
 
@@ -159,6 +217,10 @@ def compute_technicals(df_5m: pd.DataFrame, df_15m: pd.DataFrame, df_1h: pd.Data
         "signal_bias": _bias_label(composite),
         "current_price": round(current_price, 6),
         "atr": round(atr_value, 6),
+        "fib_score": fib_score,
+        "fib_levels": fib_levels,
+        "swing_high": fib_data.get("swing_high"),
+        "swing_low": fib_data.get("swing_low"),
     }
 
     logger.info("Multi-Timeframe Techs: RSI=%.0f Vol=%.1f Momentum=%.0f Trend=%.0f -> %s", 
